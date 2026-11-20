@@ -1,0 +1,11 @@
+/*
+  client/src/styles.css — titik masuk CSS: Tailwind + daisyUI.
+  Dipanggil oleh: client/src/main.ts.
+  Memanggil: plugin @tailwindcss/vite yang membaca berkas ini dan memindai kelas di berkas .vue.
+  Tema: "light" bawaan; "dark" otomatis bila laptop memakai mode gelap.
+  Layar proyektor nanti memakai tema terang kontras tinggi agar terbaca dari belakang kelas.
+*/
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default, dark --prefersdark;
+}

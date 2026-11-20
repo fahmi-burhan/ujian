@@ -1,0 +1,41 @@
+{
+  "name": "ujian",
+  "version": "0.1.0",
+  "description": "Aplikasi ujian esai serentak dengan pemantauan fokus, pembaca PDF, dan draf nilai AI berbasis rubrik",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node --watch --watch-path=server --watch-path=shared server/dev.ts",
+    "build": "vite build",
+    "start": "node server/main.ts",
+    "migrate": "node server/db/migrate-cli.ts",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json && vue-tsc --noEmit -p client/tsconfig.json"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.2",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "daisyui": "^5.8.1",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vue": "^3.5.46",
+    "vue-tsc": "^3.3.14"
+  },
+  "allowScripts": {
+    "better-sqlite3": false
+  }
+}

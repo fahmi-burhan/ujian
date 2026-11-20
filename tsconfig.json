@@ -1,0 +1,27 @@
+{
+  // Konfigurasi TypeScript untuk sisi SERVER, kode bersama (shared/), tes, dan vite.config.ts.
+  // Dipakai oleh: `npm run typecheck` (tsc hanya MEMERIKSA tipe; tidak menghasilkan berkas .js).
+  // Node 24 menjalankan .ts langsung dengan "type stripping": anotasi tipe dibuang begitu saja.
+  // Karena itu opsi di bawah memaksa kita hanya memakai sintaks yang AMAN dibuang.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["esnext"],
+    // TS 6 tidak lagi otomatis memuat semua @types, jadi tipe Node disebut eksplisit.
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    // Wajib untuk type stripping: import relatif ditulis lengkap dengan ekstensi .ts.
+    "allowImportingTsExtensions": true,
+    // Menolak enum, namespace, parameter properties: sintaks yang tidak bisa sekadar dibuang.
+    "erasableSyntaxOnly": true,
+    // Memaksa `import type` untuk impor yang hanya berisi tipe, agar Node tidak mencari nilai yang tidak ada.
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["server", "shared", "tests", "vite.config.ts"]
+}

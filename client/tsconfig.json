@@ -1,0 +1,24 @@
+{
+  // Konfigurasi TypeScript untuk sisi KLIEN (Vue di browser).
+  // Dipakai oleh: `npm run typecheck` lewat vue-tsc (memeriksa tipe di dalam berkas .vue).
+  // Vite sendiri tidak memeriksa tipe saat build; ia hanya membuang anotasi. Pemeriksaan ada di sini.
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    // "bundler": cara Vite mencari modul (paket npm + path relatif berekstensi .ts).
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["vite/client"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    // Disamakan dengan server karena berkas di shared/ dipakai di kedua sisi.
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "../shared/**/*.ts"]
+}

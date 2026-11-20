@@ -1,0 +1,15 @@
+# .gitignore — berkas yang tidak boleh masuk repo.
+# Alasan: rahasia (.env berisi kunci API), data peserta (database), PDF berhak cipta (uploads),
+# dan berkas hasil build/instalasi yang bisa dibuat ulang.
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+# Database & unggahan
+data/
+uploads/
+*.db
+*.db-wal
+*.db-shm
+.claude/settings.local.json
