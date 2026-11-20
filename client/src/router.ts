@@ -15,6 +15,12 @@ export const router = createRouter({
     { path: '/ujian', component: UjianPeserta },
     { path: '/guru/masuk', component: () => import('./halaman/MasukGuru.vue') },
     { path: '/guru', component: () => import('./halaman/BerandaGuru.vue'), meta: { perluGuru: true } },
+    // :id(\\d+) — hanya angka; alamat lain jatuh ke rute "lainnya" di bawah.
+    {
+      path: '/guru/ujian/:id(\\d+)',
+      component: () => import('./halaman/PenyusunanUjian.vue'),
+      meta: { perluGuru: true },
+    },
     { path: '/p', component: () => import('./halaman/Proyektor.vue') },
     { path: '/:lainnya(.*)*', redirect: '/' },
   ],

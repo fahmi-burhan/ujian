@@ -46,7 +46,7 @@ Label yang dipakai: **FAKTA** = perilaku teknis browser/server yang bisa dicek; 
 | Dari | Ke | Dipicu Oleh | Syarat | Efek |
 |---|---|---|---|---|
 | draf | menunggu | Penguji | ≥ 1 soal; tiap soal punya teks, rubrik lengkap (§9), dan jawaban acuan; ≥ 1 peserta; durasi 1–600 menit | `dibuka_at` = sekarang; soal/rubrik terkunci; peserta bisa masuk |
-| menunggu | draf | Penguji | Belum dimulai | `dibuka_at` = NULL; ruang tunggu menampilkan "Ujian ditutup kembali" |
+| menunggu | draf | Penguji | Belum dimulai | `dibuka_at` = NULL; ruang tunggu menampilkan "Ujian ditutup kembali". Sesi siswa **tidak** dicabut (Fase 3), jadi ruang tunggu lanjut sendiri bila dibuka lagi; endpoint siswa yang membawa isi ujian menolak fase draf |
 | menunggu | berlangsung | Penguji | — | `dimulai_at` = `detak_at` = sekarang; peserta `menunggu` → `mengerjakan`; SSE `status` ke semua |
 | berlangsung | dijeda | Penguji | — | `dijeda_at` = sekarang |
 | berlangsung | dijeda | **Server saat start** | `sekarang − detak_at > 15 dtk` (server sempat mati) | `dijeda_at = detak_at` (waktu membeku sejak detak terakhir); `log_aksi` "jeda_otomatis"; dasbor guru menampilkan "Server sempat mati X menit, ujian dijeda otomatis" |
@@ -226,6 +226,7 @@ Index dan alasannya:
 
 ## 8. Kontrak API & event real-time
 **Aturan umum:**
+- Aksi pada fase yang salah (mis. mengubah soal setelah ujian dibuka) → 409 `status_tidak_sesuai`. Batas jumlah (100 soal, 20 PDF per ujian) → 409 `batas_tercapai`.
 - Semua body divalidasi Zod dengan skema di `shared/`. Error berbentuk `{ "error": "kode_tetap" }`.
 - **Otorisasi berlapis:** setiap ID di path (`ujian`, `soal`, `pdf`, `peserta`) wajib milik ujian dari sesi (peserta) atau milik penguji dari sesi (guru). Bila tidak: 404, bukan 403, supaya keberadaannya tidak bocor.
 - **CSRF:** semua metode non-GET wajib membawa header `Origin` yang sama dengan alamat aplikasi. Di VPS alamat itu diambil dari `ORIGIN_PUBLIK` di `.env` (wajib di production, server menolak start bila kosong), sehingga tidak bergantung pada header `Host`/`X-Forwarded-Proto` dari nginx. Di laptop dibandingkan dengan protokol + host permintaan. Body JSON wajib `Content-Type: application/json`. Pengecualiannya unggah PDF (`application/pdf`) dan POST tanpa body.
@@ -249,14 +250,14 @@ Index dan alasannya:
 | DELETE | `/api/ujian/:id` | penguji pemilik | draf | — | — | 204 | Juga menghapus berkas PDF di disk |
 | POST/PATCH/DELETE | `/api/ujian/:id/soal[/:soalId]` | penguji pemilik | draf | `{judul, teks, bobot, rubrik, jawaban_acuan, pdf_id?, pdf_halaman?}` | rubrik: §9; pdf_id milik ujian ini | soal | |
 | PUT | `/api/ujian/:id/soal/urutan` | penguji pemilik | draf | `{ids}` | persis semua soal ujian ini | 204 | |
-| POST | `/api/ujian/:id/pdf` | penguji pemilik | draf | body mentah `application/pdf` (maks 30 MB), header `X-Nama-Berkas` (URL-encoded) | diawali `%PDF-`, ukuran | `{id, nama_tampil, ukuran}` | **Tanpa dependensi unggah**: `express.raw` |
+| POST | `/api/ujian/:id/pdf` | penguji pemilik | draf | body mentah `application/pdf` (maks 30 MB), header `X-Nama-Berkas` (URL-encoded) | diawali `%PDF-`, ukuran | `{id, nama_tampil, ukuran_byte, diunggah_at}` | **Tanpa dependensi unggah**: `express.raw` |
 | GET | `/api/ujian/:id/pdf/:pdfId` | penguji pemilik | semua | — | — | PDF (HTTP Range) | Untuk pratinjau guru |
 | DELETE | `/api/ujian/:id/pdf/:pdfId` | penguji pemilik | draf | — | — | 204 | Mengosongkan rujukan soal dulu |
-| POST | `/api/ujian/:id/peserta/impor` | penguji pemilik | draf, menunggu, berlangsung, dijeda (fase selain draf hanya **menambah**) | `{csv}` | ≤ 200 baris; pemisah `,` atau `;` (dideteksi); UTF-8 dengan/tanpa BOM; kolom `nama[,nomor]` | peserta baru | |
-| POST | `/api/ujian/:id/peserta` | penguji pemilik | draf, menunggu, berlangsung, dijeda | `{nama, nomor?}` | | peserta | |
+| POST | `/api/ujian/:id/peserta/impor` | penguji pemilik | draf, menunggu, berlangsung, dijeda (fase selain draf hanya **menambah**) | `{csv}` | ≤ 200 baris; pemisah `,`, `;`, atau Tab (dideteksi; Tab = tempel langsung dari Excel); UTF-8 dengan/tanpa BOM; kolom `nama[,nomor]`; baris judul ("Nama", "Nama Siswa", …) dilewati | `{ditambah[], dilewati[{baris, nama, alasan}]}` | Nama kembar & baris rusak dilewati per baris, bukan menggagalkan impor. Kosong → 400 `csv_kosong`; > 200 → 400 `csv_terlalu_banyak` |
+| POST | `/api/ujian/:id/peserta` | penguji pemilik | draf, menunggu, berlangsung, dijeda | `{nama, nomor?}` | | peserta | Nama + nomor kembar (tanpa beda huruf besar/kecil) → 409 `nama_sudah_ada` |
 | PATCH/DELETE | `/api/ujian/:id/peserta/:pid` | penguji pemilik | draf | `{nama?, nomor?}` | | peserta / 204 | |
 | GET | `/api/ujian/:id/peserta` | penguji pemilik | semua | — | — | daftar + `punya_pin`, `terkunci` (tanpa hash PIN) | |
-| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah` |
+| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah`. `buka` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` (fungsi `masalahUjian` di `shared/ujian.ts`, sama dengan daftar periksa di halaman guru). Fase 3: `buka` & `kembali-draf` |
 | POST | `/api/ujian/:id/perpanjang` | penguji pemilik | berlangsung, dijeda | `{menit, peserta_id?}` | menit −120…120, ≠ 0 | ujian/peserta | Aturan §4 |
 | POST | `/api/ujian/:id/peserta/:pid/buka-kembali` | penguji pemilik | berlangsung, dijeda | `{menit}` | 1–120 | peserta | Sisa waktu peserta menjadi minimal X menit (§4) |
 | POST | `/api/ujian/:id/proyektor/cabut` | penguji pemilik | semua | — | — | 204 | Mencabut semua sesi proyektor ujian ini (`dicabut_penguji`) |
@@ -282,7 +283,7 @@ Index dan alasannya:
 | PUT | `/api/peserta/jawaban/:soalId` | peserta | berlangsung, dijeda, selesai (aturan §4); menunggu → 409 + event (§5 langkah 1) | `{isi, ditandai, versi_dasar, id_simpan}` + `X-Tab-Id` | isi ≤ 50.000 | `{versi, disimpan_at}` / 202 `{terlambat: true}` | 409 `tab_tidak_aktif` / `versi_bentrok` / `dijeda` |
 | POST | `/api/peserta/kumpulkan` | peserta | berlangsung | `{versi: {soal_id: n}}` + `X-Tab-Id` | | 204 | 409 `belum_tersimpan` |
 | POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; detail ≤ 2.000 karakter | 204 | Selain kondisi itu: 204 dan diabaikan |
-| SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua kecuali draf | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut` |
+| SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua (draf: hanya event `status`) | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut`. Saat draf (ujian ditutup kembali) stream tetap dijawab 200 dengan `status` saja. FAKTA: `EventSource` yang menerima status non-200 berhenti permanen, sehingga ruang tunggu tidak akan lanjut sendiri saat ujian dibuka lagi |
 | GET | `/api/peserta/nilai` | peserta | dirilis | — | — | nilai total, per soal, catatan guru | |
 | *(Fase 6)* | `/api/ujian/:id/penilaian/...` | penguji pemilik | penilaian | | | | Dirancang setelah penyedia AI dipilih |
 
@@ -357,4 +358,5 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 2. **Saat dijeda:** soal tetap terlihat, editor terkunci.
 4. **Cara masuk siswa:** kode ujian → pilih nama → PIN 4 angka yang dibuat siswa sendiri (menggantikan token kertas). MAC address tidak bisa dipakai (FAKTA: browser tidak memberi akses ke identitas perangkat keras).
 3. **Menempel teks dari luar halaman:** diblokir. Upayanya dicatat (panjang teks saja) dan tampil seperti aktivitas lain. Teks yang disalin dari halaman ujian sendiri tetap boleh ditempel.
+6. **Kembali ke draf (tinjauan Fase 3):** siswa di ruang tunggu tidak dikeluarkan. Layarnya menampilkan "Ujian ditutup kembali oleh guru" dan kembali ke ruang tunggu biasa saat guru membuka lagi, tanpa mengetik PIN ulang. Selama draf, siswa hanya menerima sinyal status, tanpa isi ujian apa pun.
 5. **Batas laju (tinjauan Fase 2):** kode ujian & proyektor tanpa blokir per IP (kode benar selalu lolos, kode salah dijeda 1 dtk). Login guru memakai "perangkat dikenal" agar tidak bisa diblokir siswa. Dasbor guru mendapat tombol "Buka kunci semua" (Fase 5).

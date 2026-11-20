@@ -17,7 +17,8 @@ const saya = ref<PesertaSaya | null>(null);
 const galat = ref('');
 
 const KETERANGAN_UJIAN: Record<StatusUjian, string> = {
-  draf: 'Ujian belum dibuka.',
+  // Siswa hanya bisa melihat status draf bila guru menutup kembali ujian yang sudah dibuka.
+  draf: 'Ujian ditutup kembali oleh guru. Tunggu sampai dibuka lagi.',
   menunggu: 'Ujian belum dimulai. Tunggu aba-aba dari guru.',
   berlangsung: 'Ujian sedang berlangsung.',
   dijeda: 'Ujian sedang dijeda oleh pengawas.',

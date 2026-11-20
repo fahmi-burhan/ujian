@@ -13,7 +13,7 @@ import { useRouter } from 'vue-router';
 import { DaftarNamaResponsSchema } from '../../../shared/auth.ts';
 import type { DaftarNamaRespons } from '../../../shared/auth.ts';
 import { PANJANG_KODE_UJIAN, rapikanKode } from '../../../shared/alfabet.ts';
-import { api, pesanGalat } from '../api.ts';
+import { api, GalatApi, pesanGalat } from '../api.ts';
 
 type Langkah = 'kode' | 'nama' | 'pin';
 type PesertaPilihan = DaftarNamaRespons['peserta'][number];
@@ -89,6 +89,19 @@ async function masuk(): Promise<void> {
     });
     await router.replace('/ujian');
   } catch (e) {
+    // PIN baru saja direset guru (daftar nama di layar sudah basi): muat ulang daftar dan kembali ke
+    // pilihan nama, supaya siswa membuat PIN baru. "pin_tidak_sama" padahal layar mengira sudah punya PIN
+    // berarti hal yang sama (server menganggapnya pembuatan PIN baru tanpa ulangan).
+    const pinDireset =
+      e instanceof GalatApi && (e.kode === 'pin_berubah' || (e.kode === 'pin_tidak_sama' && dipilih.value.punya_pin));
+    if (pinDireset) {
+      await cekKode();
+      // cekKode berhasil → langkah 'nama'. Bila gagal (mis. ujian baru ditutup), pesannya dari cekKode
+      // dipertahankan dan siswa kembali ke langkah kode.
+      if (langkah.value === 'nama') galat.value = pesanGalat(new GalatApi(409, 'pin_berubah'));
+      else langkah.value = 'kode';
+      return;
+    }
     galat.value = pesanGalat(e);
     pin.value = '';
     pinUlang.value = '';

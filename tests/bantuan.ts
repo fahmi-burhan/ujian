@@ -1,7 +1,10 @@
 // tests/bantuan.ts — alat bantu tes HTTP: aplikasi dengan DB di RAM, jam palsu, dan "klien" ber-cookie.
 // Dipanggil oleh: tests/*.test.ts. Memanggil: server/app.ts, server/db/*, server/auth/*.
 // Bukan berkas tes (tidak berakhiran .test.ts), jadi tidak dijalankan sendiri oleh `npm test`.
+import { mkdtempSync, rmSync } from 'node:fs';
 import type { Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
@@ -16,6 +19,8 @@ export const T0 = 1_795_000_000_000;
 
 export type AplikasiUji = {
   db: Db;
+  // Folder unggahan sementara khusus tes ini (dihapus saat berhenti).
+  uploadDir: string;
   baseUrl: string;
   // Jam palsu yang bisa dimajukan: aplikasi.majukan(10 * 60_000).
   majukan: (ms: number) => void;
@@ -38,11 +43,18 @@ export class Klien {
   async minta(
     method: string,
     path: string,
-    opsi: { body?: unknown; origin?: string | null; headers?: Record<string, string> } = {},
+    opsi: {
+      body?: unknown;
+      // Body mentah (mis. isi PDF) beserta Content-Type-nya; menggantikan body JSON.
+      mentah?: { isi: Uint8Array; tipe: string };
+      origin?: string | null;
+      headers?: Record<string, string>;
+    } = {},
   ): Promise<Respons> {
     const headers: Record<string, string> = { ...opsi.headers };
     if (opsi.origin !== null) headers.origin = opsi.origin ?? this.baseUrl;
     if (opsi.body !== undefined) headers['content-type'] = 'application/json';
+    if (opsi.mentah) headers['content-type'] = opsi.mentah.tipe;
     // Meniru atribut Path di browser: cookie proyektor hanya ke /api/proyektor, cookie perangkat guru
     // hanya ke /api/penguji/masuk.
     const cocok = [...this.cookie].filter(([nama]) => {
@@ -54,7 +66,7 @@ export class Klien {
     const respons = await fetch(this.baseUrl + path, {
       method,
       headers,
-      body: opsi.body === undefined ? undefined : JSON.stringify(opsi.body),
+      body: opsi.mentah ? opsi.mentah.isi : opsi.body === undefined ? undefined : JSON.stringify(opsi.body),
     });
     for (const baris of respons.headers.getSetCookie()) {
       const [pasangan] = baris.split(';');
@@ -84,9 +96,10 @@ export async function mulaiAplikasiUji(
 ): Promise<AplikasiUji> {
   const db = openDatabase(':memory:');
   runMigrations(db, MIGRATIONS_DIR);
+  const uploadDir = mkdtempSync(join(tmpdir(), 'ujian-tes-'));
   let sekarang = T0;
   const { app } = await createApp({
-    config: loadConfig(env, { mode: 'test' }),
+    config: loadConfig({ UPLOAD_DIR: uploadDir, ...env }, { mode: 'test' }),
     db,
     jam: () => sekarang,
     opsi: { jedaGagalLoginMs: 0, jedaKodeSalahMs: 0, ...opsi },
@@ -96,6 +109,7 @@ export async function mulaiAplikasiUji(
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return {
     db,
+    uploadDir,
     baseUrl,
     majukan: (ms) => {
       sekarang += ms;
@@ -104,6 +118,7 @@ export async function mulaiAplikasiUji(
     berhenti: () => {
       server.close();
       db.close();
+      rmSync(uploadDir, { recursive: true, force: true });
     },
   };
 }

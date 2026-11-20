@@ -9,6 +9,8 @@ dist/
 # Database & unggahan
 data/
 uploads/
+# PDF buku berhak cipta tidak boleh masuk repo publik, di folder mana pun UPLOAD_DIR diarahkan.
+*.pdf
 *.db
 *.db-wal
 *.db-shm

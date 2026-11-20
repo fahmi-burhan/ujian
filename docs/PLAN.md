@@ -65,7 +65,7 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 | 20–22 Nov | **0. Fondasi** ✅ 20 Nov | package.json, tsconfig type stripping, Express + Vite + Vue + Tailwind, runner migrasi, `.env.example`, script npm | `npm run dev` jalan di Windows, `npm test` hijau |
 | 20–22 Nov | **1. Desain** ✅ 20 Nov | `docs/`: matriks peran × fase, state machine (termasuk jeda), skema DB, kontrak API & event SSE | Pemilik menyetujui desain |
 | 23–24 Nov | **2. Auth & peran** ✅ 20 Nov | Login penguji (scrypt), masuk peserta (nama + PIN), sesi di SQLite, ambil alih sesi, sesi & kode proyektor | Tes matriks endpoint × peran lulus |
-| 24–25 Nov | **3. Penyusunan ujian** | CRUD ujian/soal/rubrik/kunci, unggah PDF, impor peserta CSV, pratinjau, validasi kelengkapan | Ujian contoh lengkap bisa disiapkan |
+| 24–25 Nov | **3. Penyusunan ujian** ✅ 20 Nov | CRUD ujian/soal/rubrik/kunci, unggah PDF, impor peserta CSV, pratinjau, validasi kelengkapan | Ujian contoh lengkap bisa disiapkan |
 | 26–28 Nov | **4. Alur peserta** | Ruang tunggu, gerbang mulai, navigasi bebas, autosave berversi + buffer lokal, timer, pembaca PDF, submit/auto-submit | Ujian bisa dikerjakan dari awal sampai akhir. **Deploy pertama ke VPS** |
 | 29–30 Nov | **5. Integritas & proyektor** | Event browser → SSE, peringatan ke peserta, dasbor penguji, layar proyektor, jeda/perpanjangan | Event muncul ≤ 3 dtk di dasbor & proyektor |
 | 30 Nov–1 Des | **6. Penilaian** | Penilaian manual dulu, lalu AI: antrean, prompt berversi, validasi Zod, tinjau/setujui, rilis, ekspor CSV | Draf nilai AI bisa ditinjau & dirilis |
@@ -84,10 +84,14 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 
 **Fase 2 (20 Nov):**
 - **Keputusan:** sesi acak 32 byte (DB hanya menyimpan sidiknya) dengan tiga cookie terpisah, cek Origin terhadap `ORIGIN_PUBLIK` (wajib di production), dan scrypt untuk password & PIN (dibatasi semafor global). Percobaan PIN dipesan atomik sebelum dicek, sehingga tebakan serentak pun paling banyak 5. Login guru diproses berurutan per username, dan browser yang pernah berhasil login ("perangkat dikenal", migrasi 0002) melewati antrean itu sehingga siswa tidak bisa memblokir guru (keputusan pemilik). Kode ujian/proyektor tanpa blokir per IP (keputusan pemilik): kode benar selalu lolos, kode salah dijawab setelah jeda 1 dtk. Akun guru dibuat lewat `npm run penguji:buat`.
-- **Dampak ke fase berikutnya:** rute baru memakai `wajibSesi` + `validasi` + `GalatHttp`, dan tes HTTP memakai `tests/bantuan.ts`. Fase 3: transisi `kembali-draf` wajib mencabut sesi peserta ujian itu (sekarang `/api/peserta/saya` masih menjawab setelah ujian kembali ke draf). Fase 5: dasbor guru menampilkan log `pin_terkunci` dan tombol "Buka kunci semua" dengan konfirmasi (keputusan pemilik), serta daftar perangkat dikenal + "lupakan perangkat ini" (penting bila guru login di PC kelas bersama). Ditinjau `penjaga-ujian` tiga kali: 1 KRITIS + 7 PENTING + 14 KECIL, semuanya ditangani atau dijadwalkan. 113 tes lulus.
+- **Dampak ke fase berikutnya:** rute baru memakai `wajibSesi` + `validasi` + `GalatHttp`, dan tes HTTP memakai `tests/bantuan.ts`. Fase 3: perilaku sesi peserta saat `kembali-draf` diputuskan (hasil: sesi tetap, lihat DESAIN §12 no. 6). Fase 5: dasbor guru menampilkan log `pin_terkunci` dan tombol "Buka kunci semua" dengan konfirmasi (keputusan pemilik), serta daftar perangkat dikenal + "lupakan perangkat ini" (penting bila guru login di PC kelas bersama). Ditinjau `penjaga-ujian` tiga kali: 1 KRITIS + 7 PENTING + 14 KECIL, semuanya ditangani atau dijadwalkan. 113 tes lulus.
+
+**Fase 3 (20 Nov):**
+- **Keputusan:** halaman `/guru/ujian/:id` dengan tab Info, Soal & rubrik, Buku PDF, Peserta, dan Pratinjau. Rubrik boleh disimpan setengah jadi; kelengkapannya dicek saat "Buka ujian" oleh satu fungsi bersama (`masalahUjian`) yang dipakai server (409 `belum_lengkap`) dan daftar periksa di layar. PDF diunggah sebagai body mentah, disimpan dengan nama acak di `UPLOAD_DIR`, dan disajikan dengan Range. Impor peserta menerima CSV atau tempel langsung dari Excel. "Kembali ke draf" tidak mencabut sesi siswa: ruang tunggu menampilkan "ditutup kembali" lalu lanjut sendiri saat dibuka lagi (keputusan pemilik, DESAIN §12 no. 6). Port bawaan 8132 dan tanda fokus kustom mengikuti tema (permintaan pemilik).
+- **Dampak ke fase berikutnya:** Fase 4 membuat endpoint siswa (`/api/peserta/ujian`, PDF untuk siswa, autosave) yang wajib menolak fase draf dan memakai daftar putih §8.1; SSE siswa tetap tersambung saat draf dengan event `status` saja (agar `EventSource` tidak berhenti permanen); transisi `mulai`, serta deploy pertama (nginx `client_max_body_size`). Tampilan pratinjau bisa dipakai ulang untuk halaman pengerjaan. Ditinjau `penjaga-ujian`: 2 PENTING + 12 KECIL, semuanya ditangani. 141 tes lulus.
 
 ## Catatan hosting (VPS)
-- Subdomain baru (mis. `ujian.<domain>`) di aaPanel + sertifikat TLS. Port aplikasi dicek dulu agar tidak bentrok dengan aplikasi lain di VPS.
+- Subdomain baru di aaPanel + sertifikat TLS (dibuat pemilik). Port aplikasi **8132** (keputusan pemilik 20 Nov 2026, juga nilai bawaan `PORT`); nginx meneruskan ke `127.0.0.1:8132`.
 - SSE di belakang nginx: header `X-Accel-Buffering: no` + heartbeat 15 dtk.
 - `app.set('trust proxy', 1)` agar IP & cookie `secure` benar di belakang proxy.
 - Backup DB berkala selama ujian dengan `db.backup()`.
@@ -95,6 +99,8 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 - Jalankan lewat npm dengan `cwd` = akar proyek (`pm2 start npm --name ujian -- start`, atau ecosystem file dengan `script: 'npm', args: 'start'`). Jangan `pm2 start server/main.ts` langsung: pm2 bisa memilih interpreter lain untuk berkas `.ts` (TIDAK TERVERIFIKASI untuk versi pm2 di VPS).
 - Jangan set `NODE_ENV=production` di shell VPS sebelum `npm ci`, karena npm akan melewati devDependencies dan `npm run build` gagal (Vite tidak terpasang). Mode production sudah dijamin oleh `npm start`.
 - Pastikan nginx aaPanel meneruskan `X-Forwarded-For` dan `X-Forwarded-Proto` (dicek saat deploy pertama).
+- nginx `client_max_body_size` minimal `32m` (unggah PDF maksimal 30 MB); bawaan nginx 1 MB akan menolak unggahan dengan 413.
+- Cadangan berkala mencakup database **dan** folder `UPLOAD_DIR` (PDF buku).
 - Isi `ORIGIN_PUBLIK=https://<subdomain>` di `.env` VPS. `npm start` menolak jalan bila kosong. Cek Origin (CSRF) dan cookie `Secure` memakai nilai ini, jadi tidak bergantung pada header `Host` dari nginx.
 - `better-sqlite3` 13 membawa binary `linux-x64`. Kecocokannya dengan glibc Ubuntu 22.04 dicek saat deploy pertama.
 - Rencana cadangan bila Wi-Fi kelas putus: siswa tetap bisa mengetik karena jawaban disimpan di browser dan dikirim ulang otomatis saat tersambung. Penguji menjeda ujian bila putusnya lama, lalu memberi perpanjangan waktu. Siswa tidak membawa HP, jadi tidak ada hotspot cadangan untuk seluruh kelas.

@@ -24,9 +24,11 @@ const booleanText = z
   .transform((value) => value === 'true');
 
 const EnvSchema = z.object({
-  PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  PORT: z.coerce.number().int().min(1).max(65535).default(8132),
   HOST: z.string().min(1).default('127.0.0.1'),
   DB_PATH: z.string().min(1).default('data/ujian.db'),
+  // Folder berkas PDF buku, relatif terhadap akar proyek. Tidak masuk git (PDF berhak cipta).
+  UPLOAD_DIR: z.string().min(1).default('uploads'),
   TRUST_PROXY: booleanText,
   // Alamat publik aplikasi persis seperti di bilah alamat browser, mis. https://ujian.domain.id
   // (tanpa garis miring di akhir). Dipakai untuk cek Origin (CSRF) dan atribut Secure cookie,
@@ -57,6 +59,8 @@ export type Config = {
   host: string;
   // Selalu path absolut (atau ':memory:' untuk tes).
   dbPath: string;
+  // Selalu path absolut.
+  uploadDir: string;
   trustProxy: boolean;
   // null = tidak diisi (laptop): Origin dibandingkan dengan protokol + host permintaan.
   originPublik: string | null;
@@ -86,6 +90,7 @@ export function loadConfig(
     port: value.PORT,
     host: value.HOST,
     dbPath: value.DB_PATH === ':memory:' ? ':memory:' : resolve(rootDir, value.DB_PATH),
+    uploadDir: resolve(rootDir, value.UPLOAD_DIR),
     trustProxy: value.TRUST_PROXY,
     originPublik: value.ORIGIN_PUBLIK,
   };

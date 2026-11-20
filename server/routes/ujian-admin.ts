@@ -1,48 +1,32 @@
 // server/routes/ujian-admin.ts — aksi guru terkait akses: reset PIN, buka kunci, kode & cabut proyektor.
-// Dipanggil oleh: server/app.ts (dipasang di bawah /api).
-// Memanggil: server/auth/*, server/acak.ts, database.
+// Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru sudah dicek di app.ts untuk /api/ujian).
+// Memanggil: server/auth/*, server/acak.ts, server/routes/milik.ts, database.
 // Setiap aksi hanya boleh untuk ujian MILIK guru yang sedang masuk; ujian/peserta milik orang lain
 // dijawab 404 (bukan 403), supaya keberadaannya tidak bocor (docs/DESAIN.md §8).
 // Setiap aksi dicatat di log_aksi untuk ditelusuri bila ada sengketa.
 import { Router } from 'express';
-import { z } from 'zod';
-import type { Response } from 'express';
 import { PANJANG_KODE_PROYEKTOR } from '../../shared/alfabet.ts';
-import type { StatusUjian, TautanProyektor } from '../../shared/auth.ts';
+import type { TautanProyektor } from '../../shared/auth.ts';
 import { kodeAcak, sidik } from '../acak.ts';
-import { sesiDari, wajibSesi } from '../auth/penjaga.ts';
 import { cabutSesiPeserta, cabutSesiProyektor } from '../auth/sesi.ts';
-import { GalatHttp, validasi } from '../http.ts';
+import { validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { catatAksiGuru, ParamPeserta, ParamUjian, pesertaMilikUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
+import type { Response } from 'express';
 
-const ParamUjian = z.object({ id: z.coerce.number().int().positive() });
-const ParamPeserta = z.object({ id: z.coerce.number().int().positive(), pid: z.coerce.number().int().positive() });
+// Status selain draf (reset PIN & buka kunci baru bermakna setelah ujian dibuka; docs/DESAIN.md §8).
+const BUKAN_DRAF = ['menunggu', 'berlangsung', 'dijeda', 'selesai', 'penilaian', 'dirilis'] as const;
 
 export function ujianAdminRouter(k: Konteks): Router {
   const router = Router();
-  router.use('/ujian', wajibSesi(k.db, k.jam, 'penguji'));
 
-  function ujianMilik(res: Response, ujianId: number): { id: number; status: StatusUjian } {
-    const ujian = k.db
-      .prepare('SELECT id, status FROM ujian WHERE id = ? AND penguji_id = ?')
-      .get(ujianId, sesiDari(res).pengujiId) as { id: number; status: StatusUjian } | undefined;
-    if (!ujian) throw new GalatHttp(404, 'tidak_ditemukan');
-    return ujian;
-  }
-
-  // Reset PIN & buka kunci hanya bermakna setelah ujian dibuka (docs/DESAIN.md §8: "semua kecuali draf");
-  // saat draf, siswa memang belum bisa masuk.
   function pesertaMilik(res: Response, ujianId: number, pesertaId: number): void {
-    const ujian = ujianMilik(res, ujianId);
-    if (ujian.status === 'draf') throw new GalatHttp(409, 'status_tidak_sesuai');
-    const ada = k.db.prepare('SELECT 1 FROM peserta WHERE id = ? AND ujian_id = ?').get(pesertaId, ujianId);
-    if (!ada) throw new GalatHttp(404, 'tidak_ditemukan');
+    ujianMilikDiStatus(k, res, ujianId, BUKAN_DRAF);
+    pesertaMilikUjian(k, ujianId, pesertaId);
   }
 
   function catatAksi(res: Response, ujianId: number, aksi: string, detail: Record<string, unknown>): void {
-    k.db
-      .prepare("INSERT INTO log_aksi (ujian_id, aktor, penguji_id, aksi, detail_json, dibuat_at) VALUES (?, 'penguji', ?, ?, ?, ?)")
-      .run(ujianId, sesiDari(res).pengujiId, aksi, JSON.stringify(detail), k.jam());
+    catatAksiGuru(k, res, ujianId, aksi, detail);
   }
 
   // Menghapus PIN siswa (mis. namanya diklaim orang lain / lupa PIN), membuka kunci, dan mengeluarkan
@@ -75,7 +59,7 @@ export function ujianAdminRouter(k: Konteks): Router {
   // Kode 8 karakter, berlaku 10 menit, sekali pakai. Yang disimpan hanya sidiknya.
   router.post('/ujian/:id/tautan-proyektor', (req, res) => {
     const { id } = validasi(ParamUjian, req.params);
-    ujianMilik(res, id);
+    ujianMilik(k, res, id);
     const sekarang = k.jam();
     const kode = kodeAcak(PANJANG_KODE_PROYEKTOR);
     const kedaluwarsa = sekarang + k.opsi.umurKodeProyektorMs;
@@ -88,7 +72,7 @@ export function ujianAdminRouter(k: Konteks): Router {
 
   router.post('/ujian/:id/proyektor/cabut', (req, res) => {
     const { id } = validasi(ParamUjian, req.params);
-    ujianMilik(res, id);
+    ujianMilik(k, res, id);
     k.db.transaction(() => {
       const dicabut = cabutSesiProyektor(k.db, k.jam(), id);
       catatAksi(res, id, 'cabut_proyektor', { sesi_dicabut: dicabut });

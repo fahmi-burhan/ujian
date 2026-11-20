@@ -1,63 +1,105 @@
 <!--
-  client/src/halaman/BerandaGuru.vue — beranda guru (alamat "/guru").
-  Saat ini (Fase 2) menampilkan akun yang sedang masuk dan tombol keluar. Daftar & penyusunan ujian
-  ditambahkan di Fase 3 pada halaman ini.
+  client/src/halaman/BerandaGuru.vue — beranda guru (alamat "/guru"): daftar ujian milik guru dan
+  form membuat ujian baru.
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
-  Memanggil: GET /api/penguji/saya, POST /api/penguji/keluar.
+  Memanggil: GET /api/ujian, POST /api/ujian; komponen KepalaGuru.
 -->
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { PengujiSayaSchema } from '../../../shared/auth.ts';
-import type { PengujiSaya } from '../../../shared/auth.ts';
+import { RouterLink, useRouter } from 'vue-router';
+import { DaftarUjianSchema, UjianDetailSchema } from '../../../shared/ujian.ts';
+import type { UjianRingkas } from '../../../shared/ujian.ts';
 import { api, pesanGalat } from '../api.ts';
+import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
+import { LABEL_STATUS_UJIAN, WARNA_STATUS_UJIAN, waktuWib } from '../label.ts';
 
 const router = useRouter();
-const saya = ref<PengujiSaya | null>(null);
+const daftar = ref<UjianRingkas[] | null>(null);
 const galat = ref('');
+const judul = ref('');
+const durasi = ref(90);
+const membuat = ref(false);
 
 onMounted(async () => {
   try {
-    saya.value = await api('GET', '/api/penguji/saya', { skema: PengujiSayaSchema });
+    daftar.value = await api('GET', '/api/ujian', { skema: DaftarUjianSchema });
   } catch (e) {
     galat.value = pesanGalat(e);
   }
 });
 
-async function keluar(): Promise<void> {
+async function buat(): Promise<void> {
+  galat.value = '';
+  membuat.value = true;
   try {
-    await api('POST', '/api/penguji/keluar');
+    const ujian = await api('POST', '/api/ujian', {
+      body: { judul: judul.value, durasi_menit: durasi.value },
+      skema: UjianDetailSchema,
+    });
+    await router.push(`/guru/ujian/${ujian.id}`);
+  } catch (e) {
+    galat.value = pesanGalat(e);
   } finally {
-    await router.replace('/guru/masuk');
+    membuat.value = false;
   }
 }
 </script>
 
 <template>
   <div class="min-h-screen bg-base-200">
-    <header class="navbar bg-base-100 shadow-sm px-4">
-      <div class="flex-1 gap-2 text-lg font-semibold">
-        <i class="fa-solid fa-pen-to-square text-primary" aria-hidden="true"></i>
-        Ujian Esai — Guru
-      </div>
-      <div v-if="saya" class="flex-none gap-3 flex items-center">
-        <span class="hidden sm:inline text-sm">{{ saya.nama }}</span>
-        <button class="btn btn-ghost btn-sm" type="button" @click="keluar">
-          <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Keluar
-        </button>
-      </div>
-    </header>
-    <main class="max-w-6xl mx-auto p-4">
+    <KepalaGuru />
+    <main class="max-w-5xl mx-auto p-4 flex flex-col gap-4">
       <div v-if="galat" role="alert" class="alert alert-error">
         <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
         <span>{{ galat }}</span>
       </div>
-      <div v-else-if="saya" class="card bg-base-100 shadow">
+
+      <form class="card bg-base-100 shadow" @submit.prevent="buat">
         <div class="card-body">
-          <h1 class="card-title">Selamat datang, {{ saya.nama }}</h1>
-          <p class="text-base-content/70">Anda masuk sebagai <span class="font-mono">{{ saya.username }}</span>.</p>
+          <h2 class="card-title"><i class="fa-solid fa-plus" aria-hidden="true"></i> Ujian baru</h2>
+          <div class="flex flex-col sm:flex-row gap-3 sm:items-end">
+            <label class="flex flex-col gap-1 flex-1">
+              <span class="text-sm">Judul</span>
+              <input v-model="judul" class="input w-full" maxlength="200" required placeholder="mis. Latihan Ekonomi Bab 3" />
+            </label>
+            <label class="flex flex-col gap-1 sm:w-40">
+              <span class="text-sm">Durasi (menit)</span>
+              <input v-model.number="durasi" class="input w-full" type="number" min="1" max="600" required />
+            </label>
+            <button class="btn btn-primary" type="submit" :disabled="membuat || !judul.trim()">
+              <span v-if="membuat" class="loading loading-spinner"></span>
+              Buat
+            </button>
+          </div>
         </div>
-      </div>
+      </form>
+
+      <section class="card bg-base-100 shadow">
+        <div class="card-body">
+          <h2 class="card-title"><i class="fa-solid fa-list" aria-hidden="true"></i> Ujian saya</h2>
+          <div v-if="!daftar" class="flex items-center gap-2"><span class="loading loading-spinner"></span> Memuat…</div>
+          <p v-else-if="daftar.length === 0" class="text-base-content/70">Belum ada ujian. Buat ujian pertama di atas.</p>
+          <div v-else class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr><th>Judul</th><th>Kode</th><th>Status</th><th>Soal</th><th>Peserta</th><th>Diubah</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="u in daftar" :key="u.id" class="hover:bg-base-200">
+                  <td>
+                    <RouterLink :to="`/guru/ujian/${u.id}`" class="link link-hover font-medium">{{ u.judul }}</RouterLink>
+                  </td>
+                  <td class="font-mono">{{ u.kode }}</td>
+                  <td><span class="badge" :class="WARNA_STATUS_UJIAN[u.status]">{{ LABEL_STATUS_UJIAN[u.status] }}</span></td>
+                  <td>{{ u.jumlah_soal }}</td>
+                  <td>{{ u.jumlah_peserta }}</td>
+                  <td class="text-sm text-base-content/70">{{ waktuWib(u.diubah_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 </template>

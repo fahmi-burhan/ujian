@@ -24,7 +24,7 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
     // Gagal saat start lebih baik daripada semua login ditolak 403 saat ujian berlangsung.
     throw new Error(
       'ORIGIN_PUBLIK wajib diisi di .env untuk production, mis. ORIGIN_PUBLIK=https://ujian.domain-anda.id ' +
-        '(untuk mencoba di laptop: ORIGIN_PUBLIK=http://127.0.0.1:3000, lalu buka PERSIS alamat itu di browser).',
+        '(untuk mencoba di laptop: ORIGIN_PUBLIK=http://127.0.0.1:8132, lalu buka PERSIS alamat itu di browser).',
     );
   }
   console.log(`Origin publik: ${config.originPublik ?? '(tidak diisi, mengikuti alamat permintaan)'}`);

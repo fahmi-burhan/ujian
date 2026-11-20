@@ -19,7 +19,12 @@ export class GalatApi extends Error {
   }
 }
 
-type OpsiApi<T> = { body?: unknown; skema?: z.ZodType<T> };
+type OpsiApi<T> = {
+  body?: unknown;
+  // Body mentah (unggah PDF): isi berkas, Content-Type, dan header tambahan.
+  mentah?: { isi: Blob; tipe: string; header?: Record<string, string> };
+  skema?: z.ZodType<T>;
+};
 
 // Contoh: const saya = await api('GET', '/api/penguji/saya', { skema: PengujiSayaSchema });
 // Tanpa skema → respons diabaikan (untuk 204 No Content).
@@ -31,8 +36,12 @@ export async function api<T = void>(method: string, path: string, opsi: OpsiApi<
       // Cookie sesi ikut terkirim (same-origin). Browser otomatis menambahkan header Origin
       // untuk POST, yang diperiksa server sebagai perlindungan CSRF.
       credentials: 'same-origin',
-      headers: opsi.body === undefined ? {} : { 'Content-Type': 'application/json' },
-      body: opsi.body === undefined ? undefined : JSON.stringify(opsi.body),
+      headers: opsi.mentah
+        ? { 'Content-Type': opsi.mentah.tipe, ...opsi.mentah.header }
+        : opsi.body === undefined
+          ? {}
+          : { 'Content-Type': 'application/json' },
+      body: opsi.mentah ? opsi.mentah.isi : opsi.body === undefined ? undefined : JSON.stringify(opsi.body),
       cache: 'no-store',
     });
   } catch {
@@ -60,6 +69,14 @@ const PESAN: Record<string, string> = {
   tidak_ditemukan: 'Data tidak ditemukan.',
   server_sibuk: 'Server sedang melayani banyak permintaan. Tunggu sebentar, lalu coba lagi.',
   status_tidak_sesuai: 'Aksi ini belum bisa dilakukan pada tahap ujian sekarang.',
+  transisi_tidak_sah: 'Status ujian sudah berubah. Muat ulang halaman.',
+  belum_lengkap: 'Ujian belum lengkap. Periksa daftar yang perlu dilengkapi.',
+  nama_sudah_ada: 'Nama dengan nomor yang sama sudah ada di daftar.',
+  batas_tercapai: 'Jumlahnya sudah mencapai batas maksimum.',
+  bukan_pdf: 'Berkas bukan PDF. Pilih berkas berakhiran .pdf.',
+  csv_kosong: 'Tidak ada nama yang terbaca. Pastikan kolom pertama berisi nama.',
+  csv_terlalu_banyak: 'Paling banyak 200 nama sekali impor.',
+  terlalu_besar: 'Berkas atau isian terlalu besar (PDF maksimal 30 MB).',
   login_salah: 'Username atau password salah.',
   kode_salah: 'Kode ujian tidak ditemukan atau ujian belum dibuka. Cek kode di layar depan.',
   pin_salah: 'PIN salah.',

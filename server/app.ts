@@ -11,16 +11,20 @@ import express from 'express';
 import type { ErrorRequestHandler, Express } from 'express';
 import type { Config } from './config.ts';
 import type { Db } from './db/connection.ts';
-import { buatCekAsal } from './auth/penjaga.ts';
+import { buatCekAsal, wajibSesi } from './auth/penjaga.ts';
 import type { Jam } from './auth/penjaga.ts';
 import { GalatHttp } from './http.ts';
-import { buatKonteks, OPSI_KEAMANAN_BAWAAN } from './konteks.ts';
-import type { OpsiKeamanan } from './konteks.ts';
+import { OPSI_KEAMANAN_BAWAAN } from './konteks.ts';
+import type { Konteks, OpsiKeamanan } from './konteks.ts';
 import { CLIENT_DIR, DIST_DIR, NODE_MODULES_DIR, SHARED_DIR, VITE_CONFIG_FILE } from './paths.ts';
 import { healthRouter } from './routes/health.ts';
 import { pengujiAuthRouter } from './routes/penguji-auth.ts';
 import { pesertaAuthRouter } from './routes/peserta-auth.ts';
 import { proyektorRouter } from './routes/proyektor.ts';
+import { pdfRouter } from './routes/pdf.ts';
+import { pesertaGuruRouter } from './routes/peserta-guru.ts';
+import { soalRouter } from './routes/soal.ts';
+import { ujianRouter } from './routes/ujian.ts';
 import { ujianAdminRouter } from './routes/ujian-admin.ts';
 
 export type AppDeps = {
@@ -54,7 +58,13 @@ export async function createApp({
   jam = Date.now,
   opsi = {},
 }: AppDeps): Promise<CreatedApp> {
-  const konteks = buatKonteks(db, jam, { ...OPSI_KEAMANAN_BAWAAN, ...opsi }, config.originPublik);
+  const konteks: Konteks = {
+    db,
+    jam,
+    opsi: { ...OPSI_KEAMANAN_BAWAAN, ...opsi },
+    originPublik: config.originPublik,
+    uploadDir: config.uploadDir,
+  };
   const app = express();
   // Tidak memberi tahu dunia luar bahwa server memakai Express.
   app.disable('x-powered-by');
@@ -88,6 +98,13 @@ export async function createApp({
   app.use('/api', pengujiAuthRouter(konteks));
   app.use('/api', pesertaAuthRouter(konteks));
   app.use('/api', proyektorRouter(konteks));
+  // Semua /api/ujian/** adalah rute guru: sesi guru dicek SEKALI di sini, lalu tiap rute memeriksa
+  // kepemilikan ujian (server/routes/milik.ts). Sesi peserta/proyektor tidak bisa lewat.
+  app.use('/api/ujian', wajibSesi(db, jam, 'penguji'));
+  app.use('/api', ujianRouter(konteks));
+  app.use('/api', soalRouter(konteks));
+  app.use('/api', pdfRouter(konteks));
+  app.use('/api', pesertaGuruRouter(konteks));
   app.use('/api', ujianAdminRouter(konteks));
   // Rute /api yang tidak dikenal dijawab JSON 404, bukan halaman HTML aplikasi.
   app.use('/api', (_req, res) => {

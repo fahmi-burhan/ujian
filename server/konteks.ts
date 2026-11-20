@@ -1,4 +1,5 @@
-// server/konteks.ts — "konteks" yang dibagikan ke semua rute: database, jam, opsi keamanan, origin publik.
+// server/konteks.ts — "konteks" yang dibagikan ke semua rute: database, jam, opsi keamanan, origin publik,
+// dan folder unggahan.
 // Dipanggil oleh: server/app.ts (membuatnya), server/routes/* (memakainya), tes (mengganti jam & opsi).
 // Memanggil: tidak ada.
 // Alasan jam berupa fungsi (bukan Date.now langsung): tes bisa "memajukan waktu" (mis. kode proyektor
@@ -29,8 +30,6 @@ export type Konteks = {
   opsi: OpsiKeamanan;
   // ORIGIN_PUBLIK dari .env (null di laptop); dipakai untuk atribut Secure cookie.
   originPublik: string | null;
+  // Folder absolut berkas PDF (UPLOAD_DIR dari .env).
+  uploadDir: string;
 };
-
-export function buatKonteks(db: Db, jam: Jam, opsi: OpsiKeamanan, originPublik: string | null): Konteks {
-  return { db, jam, opsi, originPublik };
-}

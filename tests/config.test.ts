@@ -12,9 +12,10 @@ test('memakai nilai bawaan bila .env kosong; DB_PATH dihitung dari akar proyek',
   const config = loadConfig({}, { mode: 'production' });
   assert.deepEqual(config, {
     mode: 'production',
-    port: 3000,
+    port: 8132,
     host: '127.0.0.1',
     dbPath: resolve(ROOT_DIR, 'data/ujian.db'),
+    uploadDir: resolve(ROOT_DIR, 'uploads'),
     trustProxy: false,
     originPublik: null,
   });

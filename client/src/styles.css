@@ -9,3 +9,51 @@
 @plugin "daisyui" {
   themes: light --default, dark --prefersdark;
 }
+
+/*
+  Tanda fokus kustom (permintaan pemilik): kotak fokus bawaan browser dimatikan dan diganti gaya yang
+  mengikuti warna tema (--color-primary dari daisyUI, otomatis menyesuaikan terang/gelap).
+  - Kolom isian (input, textarea, select): bingkai berwarna utama + bayangan lembut, tanpa outline.
+  - Tombol, tautan, kotak centang, dll.: cincin hanya saat dipakai dengan KEYBOARD (:focus-visible),
+    tidak muncul saat diklik mouse. Tanda fokus tetap wajib ada agar pengguna keyboard tahu posisinya.
+  Aturan ini sengaja di luar @layer supaya mengalahkan gaya fokus bawaan komponen daisyUI.
+*/
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.input:focus,
+.input:focus-within,
+.textarea:focus,
+.select:focus,
+.select:focus-within {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-primary) 25%, transparent);
+}
+
+/* Input di dalam pembungkus .input (mis. kolom cari dengan ikon) tidak diberi tanda sendiri. */
+.input input:focus,
+.input input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Mode kontras tinggi Windows: bayangan tidak tampil, jadi kembalikan outline sistem. */
+@media (forced-colors: active) {
+  :focus-visible,
+  .input:focus,
+  .input:focus-within,
+  .textarea:focus,
+  .textarea:focus-within,
+  .select:focus,
+  .select:focus-within {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
+  }
+}

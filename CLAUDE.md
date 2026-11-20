@@ -58,14 +58,15 @@ Aplikasi web ujian esai untuk satu kelas (~30 peserta), dipakai sebagai **latiha
 ## Perintah (PowerShell)
 - Salin konfigurasi sekali: `Copy-Item .env.example .env`. `.env` dan `DB_PATH` selalu dihitung dari akar proyek.
 - **Mode ditentukan oleh entry point, bukan `.env`**: `server/dev.ts` = development, `server/main.ts` = production. Jangan menambahkan pembacaan `NODE_ENV` dari `.env`.
-- `npm run dev`: server + Vite (hot reload) di satu port, http://127.0.0.1:3000. Server restart otomatis saat `server/` atau `shared/` berubah. Vite hanya boleh membaca `client/`, `shared/`, dan `node_modules/`.
+- `npm run dev`: server + Vite (hot reload) di satu port, http://127.0.0.1:8132. Server restart otomatis saat `server/` atau `shared/` berubah. Vite hanya boleh membaca `client/`, `shared/`, dan `node_modules/`.
 - `npm test`: semua tes `tests/**/*.test.ts` (node:test, database di RAM).
 - `npm run typecheck`: `tsc` (server/shared/tes) + `vue-tsc` (klien). Jalankan sebelum menyatakan pekerjaan selesai.
 - `npm run build`: build klien ke `dist/`. `npm start`: menjalankan server mode production (butuh `dist/` dan `NODE_ENV=production`).
+- PDF buku disimpan di `UPLOAD_DIR` (bawaan `uploads/`, dihitung dari akar proyek, tidak masuk git). Tes memakai folder sementara.
 - `npm run migrate`: menjalankan migrasi tanpa menyalakan server (server juga memigrasi otomatis saat start).
 - `npm run penguji:buat`: membuat akun guru (interaktif; password diketik tersembunyi, minimal 10 karakter). Harus di terminal sungguhan, bukan lewat pipe.
 - Autentikasi (Fase 2): `server/auth/` (sesi tiga lingkup + cookie terpisah, scrypt, penjaga & cek Origin, semafor/antrean login, perangkat dikenal guru). Rute baru wajib memakai `wajibSesi(...)` dan `validasi(Skema, ...)`, dan melempar `GalatHttp`. Tes HTTP memakai `tests/bantuan.ts` (DB di RAM, jam palsu, klien ber-cookie yang mengirim Origin). Semua scrypt lewat `server/auth/kata-sandi.ts` (dibatasi semafor). Percobaan PIN dipesan atomik sebelum dicek; jangan dikembalikan ke pola "cek dulu, hitung belakangan".
-- `npm start` di laptop butuh `ORIGIN_PUBLIK=http://127.0.0.1:3000` di `.env` (production menolak start tanpa nilai ini), lalu buka persis alamat itu. `http://localhost:3000` akan ditolak 403 karena Origin-nya berbeda.
+- `npm start` di laptop butuh `ORIGIN_PUBLIK=http://127.0.0.1:8132` di `.env` (production menolak start tanpa nilai ini), lalu buka persis alamat itu. `http://localhost:8132` akan ditolak 403 karena Origin-nya berbeda.
 - Tata letak: `server/` (Express, rute, DB), `shared/` (skema Zod & utilitas yang dipakai kedua sisi), `client/` (Vue), `migrations/` (SQL bernomor), `tests/`.
 - Saat menguji server dari tool Bash di Windows, `kill -INT` tidak sampai ke proses Node. Pakai `Start-Process` + `Stop-Process` di PowerShell.
 - `better-sqlite3` memakai binary bawaan paket (Windows & Linux x64). Install script-nya ditolak lewat `allowScripts` di package.json, jadi tidak perlu Visual Studio Build Tools.
