@@ -59,7 +59,7 @@ describe('struktur', () => {
       .all() as { name: string; strict: number }[];
     assert.deepEqual(tables.map((t) => t.name).sort(), [
       'event_integritas', 'jawaban', 'jawaban_terlambat', 'jawaban_versi', 'log_aksi', 'pdf',
-      'penguji', 'peserta', 'sesi', 'soal', 'tautan_proyektor', 'ujian',
+      'penguji', 'perangkat_guru', 'peserta', 'sesi', 'soal', 'tautan_proyektor', 'ujian',
     ]);
     for (const t of tables) assert.equal(t.strict, 1, `${t.name} harus STRICT`);
   });

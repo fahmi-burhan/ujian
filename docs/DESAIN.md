@@ -188,7 +188,7 @@ Aturan kelas: dilarang membuka tab/jendela lain; siswa tidak membawa HP; layar p
 
 **Lain-lain:**
 - **Screen Wake Lock** (`navigator.wakeLock`) aktif selama mengerjakan, supaya laptop tidak tidur saat siswa lama membaca PDF.
-- **Proyektor** menampilkan pindah tab, jendela tidak aktif, dan keluar layar penuh yang tidak ditandai wajar, dalam format nama · jumlah · total durasi. **Upaya tempel dari luar: MENUNGGU KEPUTUSAN PEMILIK** apakah ikut tampil di proyektor atau hanya di dasbor guru (sisa risiko salah deteksi, lihat tabel di atas). Keputusan ini dibutuhkan di Fase 5.
+- **Proyektor** menampilkan pindah tab, jendela tidak aktif, dan keluar layar penuh yang tidak ditandai wajar, dalam format nama · jumlah · total durasi. **Upaya tempel dari luar hanya tampil di dasbor guru**, tidak di proyektor (keputusan pemilik 20 Nov), karena tempelannya sudah diblokir dan masih ada sisa risiko salah deteksi.
 - **Batas pemblokiran tempel (FAKTA):** pemblokiran hanya berlaku untuk tempel/seret ke editor. Mengetik ulang dari sumber lain dan fitur AI bawaan browser yang menyisipkan teks tanpa event `paste` tidak bisa diblokir.
 - **Peringatan ke siswa** saat kembali: "Kamu meninggalkan halaman ujian selama 12 detik. Aktivitas ini tercatat dan terlihat oleh pengawas." Tidak ada kata "curang".
 - **PDF** dibaca dengan PDF.js di dokumen yang sama, sehingga tidak memicu `blur`.
@@ -205,6 +205,7 @@ Rincian kolom, tipe, dan constraint ada di [migrations/0001_skema_awal.sql](../m
 | `peserta` | id, ujian_id, nama, nomor, pin_hash, pin_dibuat_at, pin_gagal, terkunci_at, id_anonim, status, cara_kumpul, perpanjangan_ms, masuk_pertama_at, dikumpulkan_at | INTEGER/TEXT | (ujian, nama NOCASE, nomor) unik; PIN berupa hash scrypt; pin_gagal 0–5, terkunci ⇔ 5; id_anonim unik; status ↔ cara_kumpul ↔ dikumpulkan_at konsisten | `id_anonim` dikirim ke AI menggantikan nama |
 | `sesi` | id_hash, lingkup, penguji_id, peserta_id, ujian_id, tab_aktif, … | TEXT/INTEGER | PK = SHA-256 token cookie; CHECK per lingkup (tepat satu pemilik); tab_aktif hanya untuk peserta | Bisa dicabut seketika |
 | `tautan_proyektor` | kode_hash, ujian_id, kedaluwarsa_at, dipakai_at | TEXT/INTEGER | hash saja; sekali pakai | Membuka proyektor tanpa login guru |
+| `perangkat_guru` (migrasi 0002) | penguji_id, token_hash, info_perangkat, dipakai_at, kedaluwarsa_at | INTEGER/TEXT | hash saja; 90 hari | Perangkat dikenal untuk login guru (§8 Batas laju) |
 | `jawaban` | ujian_id, peserta_id, soal_id, isi, versi, ditandai, id_simpan_terakhir, diubah_at | INTEGER/TEXT | PK (peserta, soal); **FK komposit** ke peserta & soal dari ujian yang sama; isi ≤ 50.000 | Jawaban terkini |
 | `jawaban_versi` | peserta_id, soal_id, versi, isi, alasan, disimpan_at | INTEGER/TEXT | unik (peserta, soal, versi); alasan ∈ berkala/kumpul/pulih | Riwayat |
 | `jawaban_terlambat` | ujian_id, peserta_id, soal_id, isi, versi_dasar, diterima_at, alasan, keputusan | INTEGER/TEXT | FK komposit; keputusan ∈ menunggu/diterima/ditolak | Teks yang tiba setelah batas tidak hilang |
@@ -227,16 +228,18 @@ Index dan alasannya:
 **Aturan umum:**
 - Semua body divalidasi Zod dengan skema di `shared/`. Error berbentuk `{ "error": "kode_tetap" }`.
 - **Otorisasi berlapis:** setiap ID di path (`ujian`, `soal`, `pdf`, `peserta`) wajib milik ujian dari sesi (peserta) atau milik penguji dari sesi (guru). Bila tidak: 404, bukan 403, supaya keberadaannya tidak bocor.
-- **CSRF:** semua metode non-GET wajib membawa header `Origin` yang sama dengan host. Body JSON wajib `Content-Type: application/json`. Pengecualiannya unggah PDF (`application/pdf`) dan POST tanpa body.
-- **Cookie:** `HttpOnly`, `SameSite=Lax`, `Secure` di production. **Satu nama per lingkup**: `sesi_guru` dan `sesi_peserta` (`Path=/`), serta `sesi_proyektor` (`Path=/api/proyektor`). Login peserta di browser guru (mis. saat mencoba) tidak mengeluarkan guru. Setiap endpoint hanya membaca cookie lingkupnya sendiri. `Max-Age` 12 jam, lalu peserta masuk lagi dengan nama + PIN yang sama untuk melihat nilai (lupa PIN → guru Reset PIN).
+- **CSRF:** semua metode non-GET wajib membawa header `Origin` yang sama dengan alamat aplikasi. Di VPS alamat itu diambil dari `ORIGIN_PUBLIK` di `.env` (wajib di production, server menolak start bila kosong), sehingga tidak bergantung pada header `Host`/`X-Forwarded-Proto` dari nginx. Di laptop dibandingkan dengan protokol + host permintaan. Body JSON wajib `Content-Type: application/json`. Pengecualiannya unggah PDF (`application/pdf`) dan POST tanpa body.
+- **Cookie:** `HttpOnly`, `SameSite=Lax`, `Secure` bila `ORIGIN_PUBLIK` berawalan `https:`. **Satu nama per lingkup**: `sesi_guru` dan `sesi_peserta` (`Path=/`), serta `sesi_proyektor` (`Path=/api/proyektor`). Login peserta di browser guru (mis. saat mencoba) tidak mengeluarkan guru. Setiap endpoint hanya membaca cookie lingkupnya sendiri. `Max-Age` 12 jam, lalu peserta masuk lagi dengan nama + PIN yang sama untuk melihat nilai (lupa PIN → guru Reset PIN).
 - **Batas laju:**
-  - Login guru: **tanpa penguncian** (penguncian bisa dipicu siswa untuk mengunci guru di luar). Sebagai gantinya, password minimal 10 karakter dan setiap percobaan gagal dijawab setelah jeda tetap 1 dtk. Menebak password 10 karakter dengan kecepatan itu tidak realistis.
-  - Login peserta: PIN salah dihitung **per peserta** (5 kali → terkunci, guru membuka), ditambah 600 gagal/menit per IP untuk kode ujian. Satu kelas berbagi IP, jadi batas per IP sengaja longgar. **Risiko yang diterima:** teman bisa sengaja mengunci nama orang lain dengan 5 PIN salah. Ini tercatat, dan guru membuka kuncinya dengan satu klik.
-  - Kode proyektor: 300 gagal/menit per IP (longgar karena berbagi IP dengan kelas). Kode 8 karakter yang berlaku hanya 10 menit sudah cukup sulit ditebak.
+  - Login guru: **tanpa penguncian** (penguncian bisa dipicu siswa untuk mengunci guru di luar). Sebagai gantinya, password minimal 10 karakter dan setiap percobaan gagal dijawab setelah jeda tetap 1 dtk. Percobaan untuk username yang sama diproses **berurutan** (antrean per username, paling banyak 10 menunggu, selebihnya `503 server_sibuk`), jadi tebakan paralel pun tetap ±1 per detik. Menebak password 10 karakter dengan kecepatan itu tidak realistis.
+    - **Perangkat dikenal** (keputusan pemilik 20 Nov 2026): antrean di atas bisa dipenuhi siswa sehingga guru ditolak `503`. Karena itu, browser yang berhasil login guru diberi cookie `perangkat_guru` (acak, HttpOnly, `SameSite=Strict`, `Path=/api/penguji/masuk`, 90 hari; DB hanya menyimpan sidiknya, maks 10 per guru). Login dari browser itu untuk username yang sama melewati antrean dan memakai jatah scrypt siswa. Batasan jalur ini: satu login per perangkat pada satu waktu (permintaan paralel lain dengan cookie yang sama masuk antrean biasa), jeda 1 dtk setiap gagal, dan 3 password salah berturut-turut membuat perangkat dilupakan. Cookie yang tertinggal di PC kelas paling banyak memberi 3 tebakan lambat, sedangkan salah ketik 1–2 kali tidak menghilangkan jalur guru. Keluar (logout) tidak melupakan perangkat; daftar & "lupakan perangkat ini" menyusul di Fase 5.
+  - Login peserta: PIN salah dihitung **per peserta** (5 kali → terkunci, guru membuka). Slot percobaan dipesan secara atomik **sebelum** PIN dicek, sehingga tebakan yang dikirim serentak pun paling banyak 5 yang dicek. Penguncian dicatat di `log_aksi` (aktor server, `pin_terkunci`, beserta perangkat). **Risiko yang diterima:** teman bisa sengaja mengunci nama orang lain dengan 5 PIN salah. Ini tercatat, dan guru membuka kuncinya dengan satu klik (per nama, atau "Buka kunci semua" di dasbor guru, Fase 5).
+  - Kode ujian & kode proyektor: **tanpa blokir per IP** (keputusan pemilik 20 Nov 2026). Satu kelas berbagi satu IP, sehingga blokir per IP bisa dipakai satu siswa untuk menghalangi login seluruh kelas. Kode benar selalu langsung diterima, sedangkan kode salah dijawab setelah jeda tetap 1 dtk. Ruang kode 31⁶ ≈ 887 juta (ujian) dan 31⁸ (proyektor, berlaku 10 menit), jadi menebak tetap tidak praktis.
+  - Scrypt dibatasi dengan dua jatah terpisah: PIN siswa 2 berjalan + 100 menunggu, login guru 1 berjalan + 20 menunggu (`503 server_sibuk` bila penuh). Dengan begitu banjir login tidak memperlambat penyajian berkas, dan banjir di login guru (yang menerima username apa pun) tidak membuat siswa gagal masuk. 503 tidak dihitung sebagai PIN salah.
 
 | Method/Event | Path/Nama | Peran | Fase yang Diizinkan | Body/Payload | Validasi Zod | Response | Keterangan |
 |---|---|---|---|---|---|---|---|
-| POST | `/api/penguji/masuk` | publik | semua | `{username, password}` | string 3–32 / 10–200 | 204 + cookie `sesi_guru` | Gagal → jeda 1 dtk, `login_salah` |
+| POST | `/api/penguji/masuk` | publik | semua | `{username, password}` | string 3–32 / 10–200 | 204 + cookie `sesi_guru` | Gagal → jeda 1 dtk, 401 `login_salah`. Antrean penuh → 503 `server_sibuk` |
 | POST | `/api/penguji/keluar` | penguji | semua | — | — | 204 | Mencabut sesi |
 | GET | `/api/penguji/saya` | penguji | semua | — | — | `{id, nama}` | |
 | GET/POST | `/api/ujian` | penguji | — | POST: `{judul, durasi_menit}` | judul 1–200, durasi 1–600 | daftar / ujian baru | Kode ujian dibuat server |
@@ -257,8 +260,8 @@ Index dan alasannya:
 | POST | `/api/ujian/:id/perpanjang` | penguji pemilik | berlangsung, dijeda | `{menit, peserta_id?}` | menit −120…120, ≠ 0 | ujian/peserta | Aturan §4 |
 | POST | `/api/ujian/:id/peserta/:pid/buka-kembali` | penguji pemilik | berlangsung, dijeda | `{menit}` | 1–120 | peserta | Sisa waktu peserta menjadi minimal X menit (§4) |
 | POST | `/api/ujian/:id/proyektor/cabut` | penguji pemilik | semua | — | — | 204 | Mencabut semua sesi proyektor ujian ini (`dicabut_penguji`) |
-| POST | `/api/ujian/:id/peserta/:pid/reset-pin` | penguji pemilik | semua kecuali draf | — | — | 204 | Menghapus PIN + mencabut semua sesi peserta itu (`direset_penguji`) + membuka kunci. Siswa membuat PIN baru. Dicatat di `log_aksi` |
-| POST | `/api/ujian/:id/peserta/:pid/buka-kunci` | penguji pemilik | semua kecuali draf | — | — | 204 | `pin_gagal` = 0, PIN tetap |
+| POST | `/api/ujian/:id/peserta/:pid/reset-pin` | penguji pemilik | semua kecuali draf | — | — | 204 | Menghapus PIN + mencabut semua sesi peserta itu (`direset_penguji`) + membuka kunci. Siswa membuat PIN baru. Dicatat di `log_aksi`. Draf → 409 `status_tidak_sesuai` |
+| POST | `/api/ujian/:id/peserta/:pid/buka-kunci` | penguji pemilik | semua kecuali draf | — | — | 204 | `pin_gagal` = 0, PIN tetap. Draf → 409 `status_tidak_sesuai` |
 | PATCH | `/api/ujian/:id/event/:eventId` | penguji pemilik | berlangsung → dirilis | `{ditandai_wajar, catatan_penguji}` | catatan ≤ 500 | event | |
 | GET | `/api/ujian/:id/pantau` | penguji pemilik | menunggu → selesai | — | — | snapshot (daftar field §8.1) | |
 | GET | `/api/ujian/:id/peserta/:pid/jawaban` | penguji pemilik | berlangsung → dirilis | — | — | jawaban, riwayat versi, jawaban terlambat, event | |
@@ -266,10 +269,13 @@ Index dan alasannya:
 | PATCH | `/api/ujian/:id/terlambat/:tid` | penguji pemilik | berlangsung → penilaian | `{keputusan}` | diterima/ditolak | 204 | Diterima = menjadi versi baru jawaban |
 | POST | `/api/ujian/:id/tautan-proyektor` | penguji pemilik | semua | — | — | `{kode, kedaluwarsa_at}` | Kode 8 karakter, 10 menit, sekali pakai |
 | POST | `/api/proyektor/masuk` | publik | semua | `{kode}` | 8 karakter dari alfabet tanpa huruf mirip | 204 + cookie `sesi_proyektor` | Halaman `/p` untuk mengetik kode |
+| GET | `/api/proyektor/saya` | proyektor | semua | — | — | `{ujian{judul, status}}` | Ditambahkan Fase 2 |
 | SSE | `/api/proyektor/stream` | proyektor | semua | event `proyektor` (§8.1) | — | stream | Ujian diambil dari sesi |
 | SSE | `/api/ujian/:id/pantau/stream` | penguji pemilik | menunggu → selesai | `snapshot`, `peserta`, `event_integritas`, `waktu` | — | stream | |
 | POST | `/api/peserta/daftar-nama` | publik | semua kecuali draf | `{kode}` | 6 karakter | `{judul, peserta[{id, nama, nomor, punya_pin}]}` | Daftar untuk dipilih. Kode yang salah atau ujian draf → `kode_salah` |
-| POST | `/api/peserta/masuk` | publik | semua kecuali draf | `{kode, peserta_id, pin, pin_ulang?}` | pin tepat 4 angka; `pin_ulang` wajib & sama bila belum punya PIN | 204 + cookie | Belum punya PIN → PIN dibuat. Sudah punya → dicek. Salah → `pin_salah` + sisa percobaan. Terkunci → `terkunci`. Sesi lama diambil alih (event `masuk_ulang`) |
+| POST | `/api/peserta/masuk` | publik | semua kecuali draf | `{kode, peserta_id, pin, pin_ulang?}` | pin tepat 4 angka; `pin_ulang` wajib & sama bila belum punya PIN | 204 + cookie | Belum punya PIN → PIN dibuat. Sudah punya → dicek. Salah → 401 `pin_salah` + `sisa`. Terkunci → 423 `terkunci`. PIN direset guru saat sedang dicek/dibuat → 409 `pin_berubah`. Antrean penuh → 503 `server_sibuk` (tidak dihitung salah). Sesi lama diambil alih (event `masuk_ulang`) |
+| POST | `/api/peserta/keluar` | peserta | semua | — | — | 204 | Mencabut sesi sendiri |
+| GET | `/api/peserta/saya` | peserta | semua | — | — | `{nama, nomor, status, ujian{judul, status}}` | Ringkas, untuk halaman setelah masuk (ditambahkan Fase 2) |
 | GET | `/api/peserta/ujian` | peserta | semua kecuali draf | — | — | §8.1 | **Soal + jawaban sendiri hanya saat berlangsung/dijeda** |
 | GET | `/api/peserta/pdf/:pdfId` | peserta | menunggu, berlangsung, dijeda | — | — | PDF (HTTP Range) | Hanya PDF ujiannya |
 | POST | `/api/peserta/tab` | peserta | menunggu → selesai | `{tab_id}` | UUID | 204 | Mengklaim tab aktif |
@@ -284,6 +290,8 @@ Index dan alasannya:
 Setiap payload punya skema Zod `.strict()` di `shared/`, dan tes otomatis memastikan kunci terlarang tidak pernah muncul.
 - **Kunci terlarang untuk peserta & proyektor:** `rubrik`, `rubrik_json`, `jawaban_acuan`, `pin_hash`, `id_anonim`.
 - **Kunci terlarang tambahan untuk proyektor:** `teks`, `isi`, `detail`.
+
+Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat jenis `tempel_dari_luar` (hanya untuk guru).
 
 | Penerima | Payload | Field yang boleh |
 |---|---|---|
@@ -349,3 +357,4 @@ Setiap payload punya skema Zod `.strict()` di `shared/`, dan tes otomatis memast
 2. **Saat dijeda:** soal tetap terlihat, editor terkunci.
 4. **Cara masuk siswa:** kode ujian → pilih nama → PIN 4 angka yang dibuat siswa sendiri (menggantikan token kertas). MAC address tidak bisa dipakai (FAKTA: browser tidak memberi akses ke identitas perangkat keras).
 3. **Menempel teks dari luar halaman:** diblokir. Upayanya dicatat (panjang teks saja) dan tampil seperti aktivitas lain. Teks yang disalin dari halaman ujian sendiri tetap boleh ditempel.
+5. **Batas laju (tinjauan Fase 2):** kode ujian & proyektor tanpa blokir per IP (kode benar selalu lolos, kode salah dijeda 1 dtk). Login guru memakai "perangkat dikenal" agar tidak bisa diblokir siswa. Dasbor guru mendapat tombol "Buka kunci semua" (Fase 5).

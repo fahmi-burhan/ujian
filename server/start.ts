@@ -5,6 +5,8 @@
 // dan migrasi aman diulang (yang sudah jalan dilewati).
 import { createServer } from 'node:http';
 import { createApp } from './app.ts';
+import { hapusPerangkatKedaluwarsa } from './auth/perangkat-dikenal.ts';
+import { hapusSesiLama } from './auth/sesi.ts';
 import { loadConfig, loadEnvFileFromRoot } from './config.ts';
 import { openDatabase } from './db/connection.ts';
 import { runMigrations } from './db/migrate.ts';
@@ -18,10 +20,19 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
   const config = loadConfig(process.env, { mode });
 
   console.log(`Mode: ${mode}. Berkas .env: ${envFile ?? 'tidak ada (memakai nilai bawaan)'}`);
+  if (mode === 'production' && config.originPublik === null) {
+    // Gagal saat start lebih baik daripada semua login ditolak 403 saat ujian berlangsung.
+    throw new Error(
+      'ORIGIN_PUBLIK wajib diisi di .env untuk production, mis. ORIGIN_PUBLIK=https://ujian.domain-anda.id ' +
+        '(untuk mencoba di laptop: ORIGIN_PUBLIK=http://127.0.0.1:3000, lalu buka PERSIS alamat itu di browser).',
+    );
+  }
+  console.log(`Origin publik: ${config.originPublik ?? '(tidak diisi, mengikuti alamat permintaan)'}`);
   if (mode === 'production' && !config.trustProxy) {
     console.warn(
       'PERINGATAN: TRUST_PROXY=false. Di VPS (di belakang nginx) isi TRUST_PROXY=true di .env, ' +
-        'kalau tidak, alamat IP peserta dan status HTTPS terbaca salah.',
+        'kalau tidak, alamat IP pengunjung terbaca sebagai alamat nginx. (Cek Origin dan cookie Secure ' +
+        'tidak terpengaruh karena memakai ORIGIN_PUBLIK.)',
     );
   }
 
@@ -32,6 +43,20 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
   if (applied.length > 0) {
     console.log(`Migrasi baru dijalankan: ${applied.join(', ')}`);
   }
+  const jumlahPenguji = db.prepare('SELECT COUNT(*) FROM penguji').pluck().get() as number;
+  if (jumlahPenguji === 0) {
+    console.warn('Belum ada akun guru. Buat dengan: npm run penguji:buat');
+  }
+
+  // Sesi kedaluwarsa dibersihkan saat start lalu tiap jam, agar tabel sesi tidak membengkak.
+  // Perangkat guru yang kedaluwarsa (90 hari tanpa login) ikut dibersihkan.
+  const bersihkan = (): void => {
+    hapusSesiLama(db, Date.now());
+    hapusPerangkatKedaluwarsa(db, Date.now());
+  };
+  bersihkan();
+  const pembersih = setInterval(bersihkan, 60 * 60 * 1000);
+  pembersih.unref();
 
   // Server HTTP dibuat lebih dulu supaya Vite (mode dev) bisa menumpang di port yang sama
   // untuk hot reload, alih-alih membuka port kedua.

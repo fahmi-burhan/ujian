@@ -16,6 +16,7 @@ test('memakai nilai bawaan bila .env kosong; DB_PATH dihitung dari akar proyek',
     host: '127.0.0.1',
     dbPath: resolve(ROOT_DIR, 'data/ujian.db'),
     trustProxy: false,
+    originPublik: null,
   });
 });
 
@@ -43,6 +44,17 @@ test('TRUST_PROXY=false benar-benar dibaca sebagai false', () => {
 
 test('menolak PORT yang bukan angka dengan pesan yang menyebut PORT', () => {
   assert.throws(() => loadConfig({ PORT: 'tigaribu' }, { mode: 'production' }), /PORT/);
+});
+
+test('ORIGIN_PUBLIK: kosong → null; harus alamat lengkap tanpa path atau garis miring akhir', () => {
+  assert.equal(loadConfig({ ORIGIN_PUBLIK: '' }, { mode: 'production' }).originPublik, null);
+  assert.equal(
+    loadConfig({ ORIGIN_PUBLIK: 'https://ujian.contoh.id' }, { mode: 'production' }).originPublik,
+    'https://ujian.contoh.id',
+  );
+  for (const salah of ['https://ujian.contoh.id/', 'ujian.contoh.id', 'https://ujian.contoh.id/ujian', 'ftp://x.id']) {
+    assert.throws(() => loadConfig({ ORIGIN_PUBLIK: salah }, { mode: 'production' }), /ORIGIN_PUBLIK/, salah);
+  }
 });
 
 test('menolak TRUST_PROXY selain true/false (mis. "ya")', () => {

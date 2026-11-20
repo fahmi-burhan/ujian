@@ -28,7 +28,28 @@ const EnvSchema = z.object({
   HOST: z.string().min(1).default('127.0.0.1'),
   DB_PATH: z.string().min(1).default('data/ujian.db'),
   TRUST_PROXY: booleanText,
+  // Alamat publik aplikasi persis seperti di bilah alamat browser, mis. https://ujian.domain.id
+  // (tanpa garis miring di akhir). Dipakai untuk cek Origin (CSRF) dan atribut Secure cookie,
+  // supaya tidak bergantung pada header Host/X-Forwarded-Proto dari nginx. Wajib di production
+  // (dicek di server/start.ts); kosong di laptop.
+  ORIGIN_PUBLIK: z
+    .string()
+    .optional()
+    .transform((nilai) => (nilai === undefined || nilai.trim() === '' ? null : nilai.trim()))
+    .refine((nilai) => nilai === null || originSah(nilai), {
+      message: 'ORIGIN_PUBLIK harus berupa alamat lengkap tanpa path, mis. https://ujian.domain.id',
+    }),
 });
+
+// Origin sah = skema http/https + host (+ port), tanpa path, query, atau garis miring di akhir.
+function originSah(nilai: string): boolean {
+  try {
+    const url = new URL(nilai);
+    return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === nilai;
+  } catch {
+    return false;
+  }
+}
 
 export type Config = {
   mode: Mode;
@@ -37,6 +58,8 @@ export type Config = {
   // Selalu path absolut (atau ':memory:' untuk tes).
   dbPath: string;
   trustProxy: boolean;
+  // null = tidak diisi (laptop): Origin dibandingkan dengan protokol + host permintaan.
+  originPublik: string | null;
 };
 
 // Memuat <akar proyek>/.env bila ada. Variabel yang SUDAH ada di lingkungan (mis. diset pm2 atau
@@ -64,5 +87,6 @@ export function loadConfig(
     host: value.HOST,
     dbPath: value.DB_PATH === ':memory:' ? ':memory:' : resolve(rootDir, value.DB_PATH),
     trustProxy: value.TRUST_PROXY,
+    originPublik: value.ORIGIN_PUBLIK,
   };
 }

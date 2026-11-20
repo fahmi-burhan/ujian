@@ -11,8 +11,17 @@ import express from 'express';
 import type { ErrorRequestHandler, Express } from 'express';
 import type { Config } from './config.ts';
 import type { Db } from './db/connection.ts';
+import { buatCekAsal } from './auth/penjaga.ts';
+import type { Jam } from './auth/penjaga.ts';
+import { GalatHttp } from './http.ts';
+import { buatKonteks, OPSI_KEAMANAN_BAWAAN } from './konteks.ts';
+import type { OpsiKeamanan } from './konteks.ts';
 import { CLIENT_DIR, DIST_DIR, NODE_MODULES_DIR, SHARED_DIR, VITE_CONFIG_FILE } from './paths.ts';
 import { healthRouter } from './routes/health.ts';
+import { pengujiAuthRouter } from './routes/penguji-auth.ts';
+import { pesertaAuthRouter } from './routes/peserta-auth.ts';
+import { proyektorRouter } from './routes/proyektor.ts';
+import { ujianAdminRouter } from './routes/ujian-admin.ts';
 
 export type AppDeps = {
   config: Config;
@@ -21,6 +30,9 @@ export type AppDeps = {
   httpServer?: Server;
   // Hanya untuk tes: folder hasil build pengganti dist/.
   distDir?: string;
+  // Hanya untuk tes: jam palsu (memajukan waktu) dan opsi keamanan (jeda/batas lebih kecil).
+  jam?: Jam;
+  opsi?: Partial<OpsiKeamanan>;
 };
 export type CreatedApp = { app: Express; close: () => Promise<void> };
 
@@ -34,7 +46,15 @@ function clientErrorCode(type: unknown, status: number): string {
   return 'permintaan_tidak_valid';
 }
 
-export async function createApp({ config, db, httpServer, distDir = DIST_DIR }: AppDeps): Promise<CreatedApp> {
+export async function createApp({
+  config,
+  db,
+  httpServer,
+  distDir = DIST_DIR,
+  jam = Date.now,
+  opsi = {},
+}: AppDeps): Promise<CreatedApp> {
+  const konteks = buatKonteks(db, jam, { ...OPSI_KEAMANAN_BAWAAN, ...opsi }, config.originPublik);
   const app = express();
   // Tidak memberi tahu dunia luar bahwa server memakai Express.
   app.disable('x-powered-by');
@@ -62,7 +82,13 @@ export async function createApp({ config, db, httpServer, distDir = DIST_DIR }: 
   // tetapi tetap membatasi kiriman raksasa yang membebani server.
   app.use(express.json({ limit: '1mb' }));
 
+  // Semua permintaan pengubah data ke /api wajib berasal dari halaman aplikasi ini sendiri (CSRF).
+  app.use('/api', buatCekAsal(config.originPublik));
   app.use('/api', healthRouter(db));
+  app.use('/api', pengujiAuthRouter(konteks));
+  app.use('/api', pesertaAuthRouter(konteks));
+  app.use('/api', proyektorRouter(konteks));
+  app.use('/api', ujianAdminRouter(konteks));
   // Rute /api yang tidak dikenal dijawab JSON 404, bukan halaman HTML aplikasi.
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'tidak_ditemukan' });
@@ -115,7 +141,32 @@ export async function createApp({ config, db, httpServer, distDir = DIST_DIR }: 
   //   dengan status aslinya dan dicatat SATU baris saja. Isi request TIDAK dicatat karena bisa
   //   berisi token peserta, password, atau jawaban.
   // - Kesalahan server (5xx) dicatat dengan stack trace, tetapi detailnya tidak dikirim ke klien.
+  // - 503 server_sibuk (antrean login penuh) bisa muncul ribuan kali saat ada yang membanjiri login,
+  //   jadi diringkas: satu baris di akhir setiap jendela 10 detik beserta jumlahnya.
+  let sibukTertahan = 0;
+  let sibukContoh = '';
+  let pencatatSibuk: ReturnType<typeof setTimeout> | null = null;
   const onError: ErrorRequestHandler = (error, req, res, _next) => {
+    // Galat terkendali dari rute (GalatHttp): kode & data-nya memang dirancang aman untuk klien.
+    if (error instanceof GalatHttp) {
+      if (error.status === 503) {
+        sibukTertahan += 1;
+        sibukContoh = `${req.method} ${req.path}`;
+        if (!pencatatSibuk) {
+          pencatatSibuk = setTimeout(() => {
+            console.warn(`[503] ${sibukTertahan}× server_sibuk dalam 10 dtk (terakhir: ${sibukContoh})`);
+            sibukTertahan = 0;
+            pencatatSibuk = null;
+          }, 10_000);
+          // Tidak menahan proses tetap hidup saat server dihentikan.
+          pencatatSibuk.unref();
+        }
+      } else if (error.status >= 500) {
+        console.error(`[${error.status}] ${req.method} ${req.path}: ${error.kode}`);
+      }
+      if (!res.headersSent) res.status(error.status).json({ error: error.kode, ...error.data });
+      return;
+    }
     const status = typeof error?.status === 'number' ? error.status : 500;
     if (status >= 400 && status < 500) {
       console.warn(`[${status}] ${req.method} ${req.path}: ${error?.type ?? 'permintaan tidak valid'}`);

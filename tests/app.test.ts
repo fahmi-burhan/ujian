@@ -11,12 +11,22 @@ import { createApp } from '../server/app.ts';
 import { loadConfig } from '../server/config.ts';
 import type { Mode } from '../server/config.ts';
 import { openDatabase } from '../server/db/connection.ts';
+import type { Db } from '../server/db/connection.ts';
+import { runMigrations } from '../server/db/migrate.ts';
+import { MIGRATIONS_DIR } from '../server/paths.ts';
 import { HealthResponseSchema } from '../shared/health.ts';
 
 type Running = { baseUrl: string; stop: () => void };
 
-async function start(mode: Mode, distDir?: string): Promise<Running> {
+// Database di RAM yang sudah dimigrasi (rute menyiapkan query ke tabel saat aplikasi dibuat).
+function dbUji(): Db {
   const db = openDatabase(':memory:');
+  runMigrations(db, MIGRATIONS_DIR);
+  return db;
+}
+
+async function start(mode: Mode, distDir?: string): Promise<Running> {
+  const db = dbUji();
   const { app } = await createApp({ config: loadConfig({}, { mode }), db, distDir });
   const server: Server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
@@ -120,7 +130,7 @@ describe('Penyajian dist/ (mode production dengan folder build palsu)', () => {
     const empty = mkdtempSync(join(tmpdir(), 'ujian-dist-kosong-'));
     try {
       await assert.rejects(
-        createApp({ config: loadConfig({}, { mode: 'production' }), db: openDatabase(':memory:'), distDir: empty }),
+        createApp({ config: loadConfig({}, { mode: 'production' }), db: dbUji(), distDir: empty }),
         /npm run build/,
       );
     } finally {
@@ -131,7 +141,7 @@ describe('Penyajian dist/ (mode production dengan folder build palsu)', () => {
 
 test('mode development tanpa httpServer ditolak (Vite butuh server untuk hot reload)', async () => {
   await assert.rejects(
-    createApp({ config: loadConfig({}, { mode: 'development' }), db: openDatabase(':memory:') }),
+    createApp({ config: loadConfig({}, { mode: 'development' }), db: dbUji() }),
     /httpServer/,
   );
 });
