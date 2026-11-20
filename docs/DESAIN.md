@@ -88,6 +88,10 @@ akhir_efektif(peserta) = waktu nyata saat sisa_ms = 0, atau dijeda_at (bila dije
 
 Kumpul otomatis berjalan saat `sisa_ms ≤ −10000`, jadi simpanan yang masih di jalan masuk lebih dulu.
 
+**Catatan implementasi (Fase 4):**
+- Peserta yang sudah dikumpulkan otomatis (`waktu_habis`) selalu masuk aturan 3. Kumpul otomatis baru berjalan setelah toleransi lewat, dan jeda yang terjadi setelah waktu peserta habis akan menggeser rumus bila dihitung ulang.
+- **Akhiri saat dijeda (KEPUTUSAN teknis):** setelah Akhiri, `dijeda_at` dikosongkan (CHECK skema), sehingga toleransi 10 dtk dihitung dari `diakhiri_at`, bukan dari awal jeda. Dampaknya kecil karena editor siswa terkunci selama jeda. Yang masih bisa tiba hanya teks yang sudah diketik sebelum jeda dan tertahan di jalan, dan teks itu memang milik siswa.
+
 **Perpanjangan:** satu aturan untuk semua kasus.
 - **Arti:** "sisa waktu menjadi `max(sisa sekarang, 0) + X menit`".
 - **Rumus:** `perpanjangan_ms += max(0, −sisa_ms) + X × 60000`.
@@ -99,8 +103,9 @@ Kumpul otomatis berjalan saat `sisa_ms ≤ −10000`, jadi simpanan yang masih d
 - **Koreksi salah ketik:** X boleh negatif (−120…120, bukan 0). Hasilnya dibatasi ≥ 0.
 
 **Klien:**
-- Klien menerima `sisa_ms` + `jam_server`, lalu menghitung mundur dengan selisih jam (pola Fase 0).
+- Klien menerima `sisa_ms` + `jam_server`, lalu menghitung mundur dengan jam **monoton** browser (`performance.now()`) sejak data diterima (Fase 4). Jam laptop yang salah atau diubah siswa tidak berpengaruh.
 - Klien menyelaraskan ulang setiap ada event SSE `waktu`: tiap 30 dtk, dan setiap jeda, perpanjangan, atau sambungan ulang.
+- Saat hitung mundur mencapai 0, kotak jawaban terkunci dan semua ketikan yang tertunda langsung dikirim (masih diterima sampai +10 dtk).
 
 **Server:**
 - Pengecek 1 detik menjalankan kumpul otomatis per peserta, dan memperbarui `detak_at` tiap 5 dtk.
@@ -128,17 +133,19 @@ Kumpul otomatis berjalan saat `sisa_ms ≤ −10000`, jadi simpanan yang masih d
   - Bila isi penyangga sama dengan yang terkirim, penyangga dihapus.
   - Bila siswa sudah mengetik lagi, isi baru dikirim berikutnya dengan `versi_dasar` baru. Dengan begitu tidak ada bentrok palsu.
 - **Timeout atau jaringan gagal:** kirim ulang **kiriman yang sama persis**, dengan `id_simpan` dan isi yang sama. Coba lagi dengan jeda 2, 4, 8 … maks 30 dtk, dan tampilkan indikator "belum tersimpan".
-- **`409 versi_bentrok` di tengah sesi:**
+- **`409 versi_bentrok` di tengah sesi** (payload `{versi, isi, ditandai}` milik server):
   - Bila `isi` server sama dengan kiriman terakhir milik tab ini yang belum terbalas, `versi_dasar` disesuaikan diam-diam dan pengiriman dilanjutkan.
-  - Selain itu, tampilkan dialog dua teks (lihat di bawah). Pilihan siswa dikirim sebagai versi baru, dan riwayatnya ditulis dengan alasan `konflik`.
+  - Selain itu, tampilkan dialog dua teks (lihat di bawah). Pilihan siswa dikirim sebagai versi baru dengan `konflik: true` di body, dan riwayatnya ditulis dengan alasan `konflik`.
 - **`202 terlambat`:** penyangga ditandai "terkirim terlambat" dan **tidak** dikirim ulang. Pengiriman ulang hanya terjadi bila status peserta kembali `mengerjakan`, misalnya setelah perpanjangan.
 - **`409 dijeda`:** penyangga disimpan, lalu dikirim setelah SSE `status` = berlangsung.
 
 **Penyangga lokal (`localStorage`):**
 - Kunci: `ujian:{ujian_id}:peserta:{peserta_id}:soal:{soal_id}`.
-- Isi: `{isi, ditandai, versi_dasar, id_simpan, terkirim_terlambat, diubah_at}`.
+- Isi: `{isi, ditandai, versi_dasar, id_simpan, terkirim_terlambat, diubah_at}`, ditambah `konflik` (pilihan saat bentrok) dan `terbang` (isi kiriman yang belum terbalas). Dengan `terbang`, simpanan sendiri yang balasannya hilang karena halaman ditutup tidak dianggap bentrok saat dimuat ulang (Fase 4).
+- Kirim setelah jeda mengetik 1,5 dtk, tetapi paling lambat 15 dtk sejak perubahan pertama yang belum terkirim. Permintaan yang menggantung dianggap gagal setelah 15 dtk.
+- Logika ini ada di `client/src/autosave.ts` (tanpa Vue/DOM) dan dites dengan jam & server tiruan.
 - Ditulis **sebelum** dikirim. Dihapus setelah sukses sesuai protokol di atas.
-- **Pembersihan:** semua kunci ujian itu dihapus saat halaman melihat status `penilaian`/`dirilis` dan tidak ada penyangga yang tertunda. Ini penting untuk laptop sekolah yang dipakai bergantian.
+- **Pembersihan:** semua kunci ujian itu dihapus saat halaman melihat status `penilaian`/`dirilis` dan tidak ada penyangga yang tertunda. Ini penting untuk laptop sekolah yang dipakai bergantian. Penyangga yang sudah "terkirim terlambat" tidak dihitung tertunda karena teksnya sudah ada di `jawaban_terlambat` server. Yang benar-benar tertunda dibiarkan, dan siswa diminta memberi tahu guru.
 
 **Saat halaman dimuat** (termasuk setelah laptop restart), untuk setiap soal yang punya penyangga, jawaban server diambil dari `GET /api/peserta/ujian`. Jawaban dikirim juga di fase `selesai` (§8.1):
 - `penyangga.versi_dasar = versi server` → kirim ulang (kasus biasa).
@@ -244,7 +251,7 @@ Index dan alasannya:
 | POST | `/api/penguji/keluar` | penguji | semua | — | — | 204 | Mencabut sesi |
 | GET | `/api/penguji/saya` | penguji | semua | — | — | `{id, nama}` | |
 | GET/POST | `/api/ujian` | penguji | — | POST: `{judul, durasi_menit}` | judul 1–200, durasi 1–600 | daftar / ujian baru | Kode ujian dibuat server |
-| GET | `/api/ujian/:id` | penguji pemilik | semua | — | — | ujian + soal + rubrik + PDF + jumlah peserta | |
+| GET | `/api/ujian/:id` | penguji pemilik | semua | — | — | ujian + soal + rubrik + PDF + jumlah peserta + `waktu` global (null sebelum Mulai) | `waktu` tanpa perpanjangan per peserta (Fase 4) |
 | PATCH | `/api/ujian/:id` | penguji pemilik | draf | `{judul?, petunjuk?, durasi_menit?}` | | ujian | |
 | PATCH | `/api/ujian/:id/tampilan` | penguji pemilik | semua | `{mode_tampil}` | nama/inisial | ujian | |
 | DELETE | `/api/ujian/:id` | penguji pemilik | draf | — | — | 204 | Juga menghapus berkas PDF di disk |
@@ -257,7 +264,7 @@ Index dan alasannya:
 | POST | `/api/ujian/:id/peserta` | penguji pemilik | draf, menunggu, berlangsung, dijeda | `{nama, nomor?}` | | peserta | Nama + nomor kembar (tanpa beda huruf besar/kecil) → 409 `nama_sudah_ada` |
 | PATCH/DELETE | `/api/ujian/:id/peserta/:pid` | penguji pemilik | draf | `{nama?, nomor?}` | | peserta / 204 | |
 | GET | `/api/ujian/:id/peserta` | penguji pemilik | semua | — | — | daftar + `punya_pin`, `terkunci` (tanpa hash PIN) | |
-| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah`. `buka` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` (fungsi `masalahUjian` di `shared/ujian.ts`, sama dengan daftar periksa di halaman guru). Fase 3: `buka` & `kembali-draf` |
+| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah`. `buka` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` (fungsi `masalahUjian` di `shared/ujian.ts`, sama dengan daftar periksa di halaman guru). Fase 3: `buka` & `kembali-draf`. Fase 4: `mulai`, `jeda`, `lanjutkan`, `akhiri` (jeda/lanjutkan dimajukan dari Fase 5 karena jeda otomatis server butuh tombol Lanjutkan) |
 | POST | `/api/ujian/:id/perpanjang` | penguji pemilik | berlangsung, dijeda | `{menit, peserta_id?}` | menit −120…120, ≠ 0 | ujian/peserta | Aturan §4 |
 | POST | `/api/ujian/:id/peserta/:pid/buka-kembali` | penguji pemilik | berlangsung, dijeda | `{menit}` | 1–120 | peserta | Sisa waktu peserta menjadi minimal X menit (§4) |
 | POST | `/api/ujian/:id/proyektor/cabut` | penguji pemilik | semua | — | — | 204 | Mencabut semua sesi proyektor ujian ini (`dicabut_penguji`) |
@@ -278,10 +285,10 @@ Index dan alasannya:
 | POST | `/api/peserta/keluar` | peserta | semua | — | — | 204 | Mencabut sesi sendiri |
 | GET | `/api/peserta/saya` | peserta | semua | — | — | `{nama, nomor, status, ujian{judul, status}}` | Ringkas, untuk halaman setelah masuk (ditambahkan Fase 2) |
 | GET | `/api/peserta/ujian` | peserta | semua kecuali draf | — | — | §8.1 | **Soal + jawaban sendiri hanya saat berlangsung/dijeda** |
-| GET | `/api/peserta/pdf/:pdfId` | peserta | menunggu, berlangsung, dijeda | — | — | PDF (HTTP Range) | Hanya PDF ujiannya |
-| POST | `/api/peserta/tab` | peserta | menunggu → selesai | `{tab_id}` | UUID | 204 | Mengklaim tab aktif |
-| PUT | `/api/peserta/jawaban/:soalId` | peserta | berlangsung, dijeda, selesai (aturan §4); menunggu → 409 + event (§5 langkah 1) | `{isi, ditandai, versi_dasar, id_simpan}` + `X-Tab-Id` | isi ≤ 50.000 | `{versi, disimpan_at}` / 202 `{terlambat: true}` | 409 `tab_tidak_aktif` / `versi_bentrok` / `dijeda` |
-| POST | `/api/peserta/kumpulkan` | peserta | berlangsung | `{versi: {soal_id: n}}` + `X-Tab-Id` | | 204 | 409 `belum_tersimpan` |
+| GET | `/api/peserta/pdf/:pdfId` | peserta | menunggu, berlangsung, dijeda | — | — | PDF (HTTP Range) | Hanya PDF ujiannya (lain → 404); fase lain → 409 `status_tidak_sesuai` |
+| POST | `/api/peserta/tab` | peserta | semua (Fase 4: termasuk draf, agar layar "ditutup kembali" tetap bisa membuka SSE) | `{tab_id}` | UUID | 204 | Mengklaim tab aktif; tidak membawa isi ujian |
+| PUT | `/api/peserta/jawaban/:soalId` | peserta | berlangsung, dijeda, selesai (aturan §4); draf/menunggu → 409 `belum_mulai` + event (§5 langkah 1); penilaian/dirilis → 409 `status_tidak_sesuai` | `{isi, ditandai, versi_dasar, id_simpan, konflik?}` + `X-Tab-Id` | isi ≤ 50.000 | `{versi, disimpan_at}` / 202 `{terlambat: true}` | 409 `tab_tidak_aktif` / `versi_bentrok` + `{versi, isi, ditandai}` / `dijeda` |
+| POST | `/api/peserta/kumpulkan` | peserta | berlangsung | `{versi: {soal_id: n}}` + `X-Tab-Id` | | 204 | 409 `belum_tersimpan`; dijeda → 409 `dijeda`; draf/menunggu → 409 `belum_mulai`. Sudah dikumpulkan → 204 (klik ganda bukan galat) |
 | POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; detail ≤ 2.000 karakter | 204 | Selain kondisi itu: 204 dan diabaikan |
 | SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua (draf: hanya event `status`) | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut`. Saat draf (ujian ditutup kembali) stream tetap dijawab 200 dengan `status` saja. FAKTA: `EventSource` yang menerima status non-200 berhenti permanen, sehingga ruang tunggu tidak akan lanjut sendiri saat ujian dibuka lagi |
 | GET | `/api/peserta/nilai` | peserta | dirilis | — | — | nilai total, per soal, catatan guru | |
@@ -296,9 +303,10 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 
 | Penerima | Payload | Field yang boleh |
 |---|---|---|
-| Peserta | `GET /api/peserta/ujian` | `status`, `waktu{sisa_ms, jam_server, dijeda}`, `judul`, `petunjuk`, `durasi_menit`, `jumlah_soal`, `pdf[{id, nama_tampil}]`, `saya{nama, status, cara_kumpul}`. Hanya saat berlangsung/dijeda: `soal[{id, urutan, judul, teks, bobot, pdf_id, pdf_halaman}]`. Saat berlangsung/dijeda/selesai: `jawaban[{soal_id, isi, versi, ditandai}]` (jawaban **sendiri**, untuk mencocokkan penyangga; di fase selesai tanpa teks soal) |
+| Peserta | `GET /api/peserta/ujian` | `id` (ujian), `status`, `waktu{sisa_ms, jam_server, dijeda}`, `judul`, `petunjuk`, `durasi_menit`, `jumlah_soal`, `pdf[{id, nama_tampil}]`, `saya{id, nama, status, cara_kumpul}`. (`id` & `saya.id` hanya untuk kunci penyangga lokal; id peserta memang sudah terlihat di daftar nama.) Hanya saat berlangsung/dijeda: `soal[{id, urutan, judul, teks, bobot, pdf_id, pdf_halaman}]`. Saat berlangsung/dijeda/selesai: `jawaban[{soal_id, isi, versi, ditandai}]` (jawaban **sendiri**, untuk mencocokkan penyangga; di fase selesai tanpa teks soal) |
 | Peserta | SSE `status` | `{status}` saja (sinyal, lalu klien memanggil ulang GET) |
 | Peserta | SSE `waktu` | `{sisa_ms, jam_server, dijeda}` |
+| Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji` |
 | Proyektor | SSE `proyektor` | `judul`, `status`, `kode` (hanya fase menunggu), `waktu{sisa_ms, jam_server, dijeda}` (global), `hadir`, `total`, `terkumpul`, `peserta[{label, status, terjawab, jumlah_soal, aktivitas{jenis: {kali, total_ms}}}]`, `terbaru[{label, jenis, durasi_ms, mulai_at}]` |
 | Guru | `GET /pantau` | Per peserta: `id`, `nama`, `nomor`, `status`, `cara_kumpul`, `tersambung`, `info_perangkat`, `terjawab`, `simpan_terakhir_at`, `sisa_ms`, `punya_pin`, `terkunci`, ringkasan event. **Tanpa hash PIN, tanpa teks soal** |
 

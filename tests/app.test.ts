@@ -66,7 +66,11 @@ describe('API (mode test: tanpa Vite dan tanpa dist/)', () => {
     assert.equal(response.headers.get('x-powered-by'), null);
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-frame-options'), 'DENY');
-    assert.equal(response.headers.get('content-security-policy'), "frame-ancestors 'none'");
+    // Mode tes/production: CSP ketat (hanya skrip dari server sendiri, tanpa skrip sisipan).
+    const csp = response.headers.get('content-security-policy') ?? '';
+    assert.match(csp, /script-src 'self' 'wasm-unsafe-eval';/);
+    assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline/);
+    assert.match(csp, /frame-ancestors 'none'/);
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
   });
 

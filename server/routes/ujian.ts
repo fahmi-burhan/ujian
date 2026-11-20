@@ -2,8 +2,8 @@
 // "Buka ujian" (draf → menunggu) dan "Kembali ke draf" (menunggu → draf).
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru dicek di app.ts untuk /api/ujian).
 // Memanggil: shared/ujian.ts (skema & cek kelengkapan), server/routes/milik.ts, server/berkas-pdf.ts, database.
-// Kontrak: docs/DESAIN.md §3 (transisi) dan §8 (endpoint). Transisi lain (mulai, jeda, akhiri, …) dibuat
-// di Fase 4–6.
+// Kontrak: docs/DESAIN.md §3 (transisi) dan §8 (endpoint). Mulai/jeda/lanjutkan/akhiri ada di
+// server/routes/ujian-jalan.ts; transisi penilaian dibuat di Fase 6.
 import { Router } from 'express';
 import type { Response } from 'express';
 import { PANJANG_KODE_UJIAN } from '../../shared/alfabet.ts';
@@ -22,6 +22,8 @@ import { sesiDari } from '../auth/penjaga.ts';
 import { hapusBerkas } from '../berkas-pdf.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { siarkanStatus } from '../siaran.ts';
+import { bacaUjianWaktu, waktuPeserta } from '../waktu-ujian.ts';
 import { catatAksiGuru, ParamUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
 
 type BarisSoal = Omit<SoalGuru, 'rubrik'> & { rubrik_json: string };
@@ -50,8 +52,11 @@ export function muatSoalGuru(k: Konteks, ujianId: number): SoalGuru[] {
 export function muatUjianDetail(k: Konteks, ujianId: number): UjianDetail {
   const ujian = k.db
     .prepare('SELECT id, judul, petunjuk, kode, durasi_menit, status, mode_tampil, dibuka_at FROM ujian WHERE id = ?')
-    .get(ujianId) as Omit<UjianDetail, 'soal' | 'pdf' | 'jumlah_peserta'> | undefined;
+    .get(ujianId) as Omit<UjianDetail, 'soal' | 'pdf' | 'jumlah_peserta' | 'waktu'> | undefined;
   if (!ujian) throw new GalatHttp(404, 'tidak_ditemukan');
+  // Sisa waktu GLOBAL (tanpa perpanjangan per peserta), hanya setelah ujian dimulai.
+  const uw = bacaUjianWaktu(k.db, ujianId);
+  const waktu = uw && uw.dimulai_at !== null ? waktuPeserta(uw, { perpanjangan_ms: 0 }, k.jam()) : null;
   const pdf = k.db
     .prepare('SELECT id, nama_tampil, ukuran_byte, diunggah_at FROM pdf WHERE ujian_id = ? ORDER BY id')
     .all(ujianId) as PdfInfo[];
@@ -68,6 +73,7 @@ export function muatUjianDetail(k: Konteks, ujianId: number): UjianDetail {
     soal: muatSoalGuru(k, ujianId),
     pdf,
     jumlah_peserta: jumlahPeserta,
+    waktu,
   };
 }
 
@@ -152,6 +158,7 @@ export function ujianRouter(k: Konteks): Router {
       k.db.prepare("DELETE FROM ujian WHERE id = ? AND status = 'draf'").run(id);
       return nama;
     })();
+    k.sse.tutupPeserta((kon) => kon.ujianId === id, 'sesi_dicabut', { alasan: 'dihapus_penguji' });
     for (const nama of berkas) await hapusBerkas(k.uploadDir, nama);
     res.status(204).end();
   });
@@ -175,6 +182,8 @@ export function ujianRouter(k: Konteks): Router {
       const sekarang = k.jam();
       transisi(res, id, 'draf', "UPDATE ujian SET status = 'menunggu', dibuka_at = ?, diubah_at = ?", [sekarang, sekarang], 'buka');
     })();
+    // Siswa yang masih di layar "ditutup kembali" langsung kembali ke ruang tunggu (DESAIN §12 no. 6).
+    siarkanStatus(k, id);
     res.json(muatUjianDetail(k, id));
   });
 
@@ -187,6 +196,7 @@ export function ujianRouter(k: Konteks): Router {
     k.db.transaction(() => {
       transisi(res, id, 'menunggu', "UPDATE ujian SET status = 'draf', dibuka_at = NULL, diubah_at = ?", [k.jam()], 'kembali_draf');
     })();
+    siarkanStatus(k, id);
     res.json(muatUjianDetail(k, id));
   });
 

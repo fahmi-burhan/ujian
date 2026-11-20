@@ -4,7 +4,7 @@
 // Kontrak (docs/DESAIN.md §8):
 // - Unggah: body mentah `application/pdf` maks 30 MB, nama asli di header X-Nama-Berkas (URL-encoded).
 //   Isi wajib diawali "%PDF-". Di disk disimpan dengan nama acak buatan server.
-// - Sajikan: mendukung HTTP Range (PDF.js memuat bertahap). Endpoint PDF untuk peserta dibuat di Fase 4.
+// - Sajikan: mendukung HTTP Range (PDF.js memuat bertahap). Endpoint PDF untuk siswa ada di peserta-ujian.ts.
 // - Hapus: rujukan soal ke PDF itu dikosongkan dulu.
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -12,7 +12,7 @@ import express, { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { BATAS } from '../../shared/ujian.ts';
 import type { PdfInfo } from '../../shared/ujian.ts';
-import { hapusBerkas, namaBerkasBaru, pathBerkas } from '../berkas-pdf.ts';
+import { hapusBerkas, kirimPdf, namaBerkasBaru, pathBerkas } from '../berkas-pdf.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
 import { catatAksiGuru, ParamPdf, ParamUjian, sentuhUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
@@ -100,20 +100,7 @@ export function pdfRouter(k: Konteks): Router {
       .pluck()
       .get(pdfId, id) as string | undefined;
     if (!namaBerkas) throw new GalatHttp(404, 'tidak_ditemukan');
-    // sendFile menangani Range (206) & ETag. no-store: berkas tidak tertinggal di cache laptop bersama.
-    // `root` wajib: tanpa itu, modul send memeriksa SETIAP folder di path absolut dengan aturan dotfiles,
-    // sehingga UPLOAD_DIR di bawah folder berawalan titik (mis. /srv/.apps/ujian) selalu 404.
-    // pathBerkas tetap dipanggil untuk memvalidasi pola nama berkas.
-    pathBerkas(k.uploadDir, namaBerkas);
-    res.sendFile(
-      namaBerkas,
-      { root: k.uploadDir, headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store' } },
-      (galat) => {
-        if (!galat) return;
-        if ((galat as NodeJS.ErrnoException).code === 'ENOENT') next(new GalatHttp(404, 'tidak_ditemukan'));
-        else next(galat);
-      },
-    );
+    kirimPdf(k.uploadDir, namaBerkas, res, next);
   });
 
   router.delete('/ujian/:id/pdf/:pdfId', async (req, res) => {

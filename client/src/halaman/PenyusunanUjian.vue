@@ -1,13 +1,15 @@
 <!--
   client/src/halaman/PenyusunanUjian.vue — penyusunan satu ujian (alamat "/guru/ujian/:id"): tab Info, Soal &
-  rubrik, Buku PDF, Peserta, Pratinjau; daftar periksa kelengkapan; tombol Buka ujian / Kembali ke draf / Hapus.
+  rubrik, Buku PDF, Peserta, Pratinjau; daftar periksa kelengkapan; tombol Buka ujian / Kembali ke draf / Hapus,
+  dan selama ujian: Mulai / Jeda / Lanjutkan / Akhiri beserta sisa waktu global.
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
-  Memanggil: GET/DELETE /api/ujian/:id, POST /api/ujian/:id/{buka,kembali-draf}; komponen di komponen/guru/.
+  Memanggil: GET/DELETE /api/ujian/:id, POST /api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri};
+             komponen di komponen/guru/.
   Daftar periksa memakai fungsi yang SAMA dengan server (masalahUjian di shared/ujian.ts), jadi yang
   tertulis di sini persis alasan server menolak "Buka ujian".
 -->
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { masalahUjian, UjianDetailSchema } from '../../../shared/ujian.ts';
 import type { UjianDetail } from '../../../shared/ujian.ts';
@@ -19,6 +21,7 @@ import InfoUjian from '../komponen/guru/InfoUjian.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import PratinjauUjian from '../komponen/guru/PratinjauUjian.vue';
 import { LABEL_STATUS_UJIAN, WARNA_STATUS_UJIAN } from '../label.ts';
+import { formatSisa } from '../../../shared/time.ts';
 
 type Tab = 'info' | 'soal' | 'pdf' | 'peserta' | 'pratinjau';
 const TAB: { id: Tab; label: string; ikon: string }[] = [
@@ -41,6 +44,33 @@ const sibuk = ref(false);
 
 const draf = computed(() => ujian.value?.status === 'draf');
 const masalah = computed(() => (ujian.value ? masalahUjian(ujian.value) : []));
+const berjalan = computed(() => ujian.value?.status === 'berlangsung' || ujian.value?.status === 'dijeda');
+// "Akhiri" dua langkah (docs/DESAIN.md §3): klik pertama hanya menampilkan konfirmasi.
+const konfirmasiAkhiri = ref(false);
+
+// Sisa waktu GLOBAL dihitung mundur dengan jam monoton browser, diselaraskan setiap data ujian dimuat.
+const acuanWaktu = ref<{ sisaMs: number; dijeda: boolean; t: number } | null>(null);
+const kini = ref(performance.now());
+const sisaGlobal = computed(() => {
+  const a = acuanWaktu.value;
+  if (!a) return null;
+  return a.dijeda ? a.sisaMs : a.sisaMs - (kini.value - a.t);
+});
+watch(ujian, (u) => {
+  acuanWaktu.value = u?.waktu ? { sisaMs: u.waktu.sisa_ms, dijeda: u.waktu.dijeda, t: performance.now() } : null;
+});
+// Selama ujian berjalan, data dimuat ulang tiap 15 dtk supaya jeda otomatis oleh server (server sempat mati)
+// terlihat. Dasbor pemantauan real-time menyusul di Fase 5.
+const detik = setInterval(() => {
+  kini.value = performance.now();
+}, 500);
+const pemuatUlang = setInterval(() => {
+  if (berjalan.value && !sibuk.value) void muat();
+}, 15_000);
+onBeforeUnmount(() => {
+  clearInterval(detik);
+  clearInterval(pemuatUlang);
+});
 
 async function muat(): Promise<void> {
   try {
@@ -58,9 +88,12 @@ function perbarui(baru: UjianDetail): void {
   ujian.value = baru;
 }
 
-async function jalankan(aksi: 'buka' | 'kembali-draf'): Promise<void> {
+type Aksi = 'buka' | 'kembali-draf' | 'mulai' | 'jeda' | 'lanjutkan' | 'akhiri';
+
+async function jalankan(aksi: Aksi): Promise<void> {
   galat.value = '';
   masalahServer.value = [];
+  konfirmasiAkhiri.value = false;
   sibuk.value = true;
   try {
     ujian.value = await api('POST', `/api/ujian/${id.value}/${aksi}`, { skema: UjianDetailSchema });
@@ -144,7 +177,34 @@ watch(
             <div v-else-if="ujian.status === 'menunggu'" class="alert alert-info">
               <i class="fa-solid fa-door-open" aria-hidden="true"></i>
               <span>Ujian dibuka: siswa bisa masuk ke ruang tunggu dengan kode di atas. Soal & rubrik terkunci.
+                Tekan <strong>Mulai</strong> saat semua siap; soal langsung muncul di semua laptop siswa.
                 Untuk mengubah soal, kembalikan ke draf.</span>
+            </div>
+            <div v-else-if="berjalan" class="flex flex-wrap items-center gap-3">
+              <div
+                class="font-mono text-3xl font-bold tabular-nums"
+                :class="{ 'text-warning': ujian.status === 'dijeda', 'text-error': sisaGlobal !== null && sisaGlobal <= 0 }"
+                role="timer"
+              >
+                <i class="fa-solid" :class="ujian.status === 'dijeda' ? 'fa-pause' : 'fa-clock'" aria-hidden="true"></i>
+                {{ sisaGlobal === null ? '–' : formatSisa(sisaGlobal) }}
+              </div>
+              <p class="text-sm text-base-content/70 flex-1 min-w-60">
+                <template v-if="ujian.status === 'dijeda'">Waktu semua siswa berhenti. Soal tetap terlihat, kotak jawaban terkunci.</template>
+                <template v-else-if="sisaGlobal !== null && sisaGlobal <= 0">
+                  Waktu habis: jawaban siswa dikumpulkan otomatis. Tekan <strong>Akhiri</strong> bila sudah selesai.
+                </template>
+                <template v-else>Sisa waktu global. Siswa yang belum mengumpulkan dikumpulkan otomatis saat waktu habis.</template>
+              </p>
+            </div>
+            <div v-if="konfirmasiAkhiri" role="alert" class="alert alert-warning">
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              <span>Akhiri ujian sekarang? Semua siswa yang masih mengerjakan langsung dikumpulkan dan tidak bisa
+                mengetik lagi.</span>
+              <div class="flex gap-2">
+                <button class="btn btn-sm" type="button" @click="konfirmasiAkhiri = false">Batal</button>
+                <button class="btn btn-sm btn-error" type="button" :disabled="sibuk" @click="jalankan('akhiri')">Ya, akhiri</button>
+              </div>
             </div>
 
             <div class="flex flex-wrap gap-2 justify-end">
@@ -157,6 +217,18 @@ watch(
               <button v-if="draf" class="btn btn-primary" type="button" :disabled="sibuk || masalah.length > 0" @click="jalankan('buka')">
                 <span v-if="sibuk" class="loading loading-spinner"></span>
                 <i v-else class="fa-solid fa-door-open" aria-hidden="true"></i> Buka ujian
+              </button>
+              <button v-if="ujian.status === 'menunggu'" class="btn btn-success" type="button" :disabled="sibuk" @click="jalankan('mulai')">
+                <i class="fa-solid fa-play" aria-hidden="true"></i> Mulai ujian
+              </button>
+              <button v-if="ujian.status === 'berlangsung'" class="btn btn-warning" type="button" :disabled="sibuk" @click="jalankan('jeda')">
+                <i class="fa-solid fa-pause" aria-hidden="true"></i> Jeda
+              </button>
+              <button v-if="ujian.status === 'dijeda'" class="btn btn-success" type="button" :disabled="sibuk" @click="jalankan('lanjutkan')">
+                <i class="fa-solid fa-play" aria-hidden="true"></i> Lanjutkan
+              </button>
+              <button v-if="berjalan && !konfirmasiAkhiri" class="btn btn-error btn-outline" type="button" :disabled="sibuk" @click="konfirmasiAkhiri = true">
+                <i class="fa-solid fa-flag-checkered" aria-hidden="true"></i> Akhiri ujian
               </button>
             </div>
           </div>

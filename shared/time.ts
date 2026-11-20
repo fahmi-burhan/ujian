@@ -1,5 +1,5 @@
 // shared/time.ts — utilitas waktu yang dipakai server dan klien.
-// Dipanggil oleh: client/src/App.vue (dan nanti timer ujian, dasbor, proyektor, ekspor).
+// Dipanggil oleh: client/src/App.vue, timer ujian siswa & guru (formatSisa), nanti dasbor, proyektor, ekspor.
 // Memanggil: Intl.DateTimeFormat bawaan JavaScript.
 // Alasan: aturan proyek menampilkan waktu dalam format 24 jam WIB. Zona waktu ditetapkan eksplisit
 // ke Asia/Jakarta agar tampilan sama walau laptop peserta salah mengatur zona waktunya.
@@ -16,6 +16,17 @@ const WIB_FORMAT = new Intl.DateTimeFormat('id-ID', {
 export function formatWib(epochMs: number): string {
   // id-ID memisahkan jam dengan titik (14.30.05); diganti titik dua agar mudah dibaca di proyektor.
   return `${WIB_FORMAT.format(epochMs).replaceAll('.', ':')} WIB`;
+}
+
+// Sisa waktu ujian untuk ditampilkan: "1:05:09" (≥ 1 jam), "05:09", atau "00:00" bila sudah habis.
+// Dibulatkan ke ATAS per detik, supaya "00:00" baru tampil tepat saat waktunya benar-benar habis.
+export function formatSisa(ms: number): string {
+  const detik = Math.max(0, Math.ceil(ms / 1000));
+  const jam = Math.floor(detik / 3600);
+  const menit = Math.floor((detik % 3600) / 60);
+  const dtk = detik % 60;
+  const dua = (n: number): string => String(n).padStart(2, '0');
+  return jam > 0 ? `${jam}:${dua(menit)}:${dua(dtk)}` : `${dua(menit)}:${dua(dtk)}`;
 }
 
 // Selisih jam server terhadap jam lokal, memakai titik tengah perjalanan request.

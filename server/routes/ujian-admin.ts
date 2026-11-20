@@ -42,6 +42,7 @@ export function ujianAdminRouter(k: Konteks): Router {
       const dicabut = cabutSesiPeserta(k.db, sekarang, pid, 'direset_penguji');
       catatAksi(res, id, 'reset_pin', { peserta_id: pid, sesi_dicabut: dicabut });
     })();
+    k.sse.tutupPeserta((kon) => kon.pesertaId === pid, 'sesi_dicabut', { alasan: 'direset_penguji' });
     res.status(204).end();
   });
 

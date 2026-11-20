@@ -160,12 +160,15 @@ export function pesertaAuthRouter(k: Konteks): Router {
           )
           .run(ujian.id, pesertaId, sekarang, JSON.stringify({ perangkat }));
       }
-      // Status peserta mengikuti fase ujian (docs/DESAIN.md §3, tabel status peserta).
-      if (ujian.status === 'menunggu') {
+      // Status peserta mengikuti fase ujian (docs/DESAIN.md §3, tabel status peserta). Status ujian DIBACA
+      // ULANG di sini: pengecekan PIN (scrypt) bisa antre beberapa detik, dan guru mungkin menekan Mulai/Akhiri
+      // di sela-selanya. Memakai status lama membuat siswa terjebak "menunggu" saat ujian sudah berlangsung.
+      const statusKini = k.db.prepare('SELECT status FROM ujian WHERE id = ?').pluck().get(ujian.id) as StatusUjian;
+      if (statusKini === 'menunggu') {
         k.db
           .prepare("UPDATE peserta SET status = 'menunggu', masuk_pertama_at = ? WHERE id = ? AND status = 'belum_masuk'")
           .run(sekarang, pesertaId);
-      } else if (ujian.status === 'berlangsung' || ujian.status === 'dijeda') {
+      } else if (statusKini === 'berlangsung' || statusKini === 'dijeda') {
         // Peserta terlambat langsung mengerjakan dengan sisa waktu global.
         k.db
           .prepare(
@@ -177,12 +180,17 @@ export function pesertaAuthRouter(k: Konteks): Router {
       return buatSesi(k.db, sekarang, { lingkup: 'peserta', pesertaId, infoPerangkat: perangkat });
     })();
 
+    // Aliran SSE yang masih terbuka milik sesi lama (mis. laptop lain) ditutup dengan `sesi_dicabut`.
+    // Sesi baru belum punya aliran, jadi semua aliran peserta ini memang milik sesi lama.
+    k.sse.tutupPeserta((kon) => kon.pesertaId === pesertaId, 'sesi_dicabut', { alasan: 'diambil_alih' });
     pasangCookieSesi(req, res, 'peserta', token, k.originPublik);
     res.status(204).end();
   });
 
   router.post('/peserta/keluar', wajibPeserta, (req, res) => {
-    cabutSesi(k.db, k.jam(), sesiDari(res).idHash, 'keluar');
+    const { idHash } = sesiDari(res);
+    cabutSesi(k.db, k.jam(), idHash, 'keluar');
+    k.sse.tutupPeserta((kon) => kon.sesiHash === idHash, 'sesi_dicabut', { alasan: 'keluar' });
     hapusCookieSesi(req, res, 'peserta', k.originPublik);
     res.status(204).end();
   });

@@ -1,11 +1,12 @@
 // server/konteks.ts — "konteks" yang dibagikan ke semua rute: database, jam, opsi keamanan, origin publik,
-// dan folder unggahan.
+// folder unggahan, dan pusat koneksi SSE.
 // Dipanggil oleh: server/app.ts (membuatnya), server/routes/* (memakainya), tes (mengganti jam & opsi).
 // Memanggil: tidak ada.
 // Alasan jam berupa fungsi (bukan Date.now langsung): tes bisa "memajukan waktu" (mis. kode proyektor
 // kedaluwarsa setelah 10 menit) tanpa benar-benar menunggu.
 import type { Db } from './db/connection.ts';
 import type { Jam } from './auth/penjaga.ts';
+import type { HubSse } from './sse.ts';
 
 export type OpsiKeamanan = {
   // Jeda tetap sebelum menjawab login guru yang gagal (memperlambat tebak password).
@@ -32,4 +33,6 @@ export type Konteks = {
   originPublik: string | null;
   // Folder absolut berkas PDF (UPLOAD_DIR dari .env).
   uploadDir: string;
+  // Koneksi SSE yang sedang terbuka (server/sse.ts).
+  sse: HubSse;
 };

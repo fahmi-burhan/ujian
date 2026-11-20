@@ -61,8 +61,20 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
   // Server HTTP dibuat lebih dulu supaya Vite (mode dev) bisa menumpang di port yang sama
   // untuk hot reload, alih-alih membuka port kedua.
   const server = createServer();
-  const { app, close } = await createApp({ config, db, httpServer: server });
+  const { app, close, pengecek } = await createApp({ config, db, httpServer: server });
   server.on('request', app);
+
+  // Pengecek ujian: sekali SEBELUM menerima permintaan (ujian yang sedang berlangsung saat server mati
+  // langsung dijeda otomatis, docs/DESAIN.md §3), lalu tiap detik.
+  pengecek();
+  const jamPengecek = setInterval(() => {
+    try {
+      pengecek();
+    } catch (galat) {
+      // Satu putaran yang gagal (mis. disk penuh sesaat) tidak boleh menghentikan putaran berikutnya.
+      console.error('[pengecek] gagal:', galat);
+    }
+  }, 1000);
 
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
@@ -84,6 +96,7 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`Menerima ${signal}, server dihentikan...`);
+    clearInterval(jamPengecek);
     server.close();
     await close();
     db.close();

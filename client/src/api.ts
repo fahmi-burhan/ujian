@@ -23,6 +23,8 @@ type OpsiApi<T> = {
   body?: unknown;
   // Body mentah (unggah PDF): isi berkas, Content-Type, dan header tambahan.
   mentah?: { isi: Blob; tipe: string; header?: Record<string, string> };
+  // Header tambahan (mis. X-Tab-Id untuk Kumpulkan).
+  header?: Record<string, string>;
   skema?: z.ZodType<T>;
 };
 
@@ -36,11 +38,14 @@ export async function api<T = void>(method: string, path: string, opsi: OpsiApi<
       // Cookie sesi ikut terkirim (same-origin). Browser otomatis menambahkan header Origin
       // untuk POST, yang diperiksa server sebagai perlindungan CSRF.
       credentials: 'same-origin',
-      headers: opsi.mentah
-        ? { 'Content-Type': opsi.mentah.tipe, ...opsi.mentah.header }
-        : opsi.body === undefined
-          ? {}
-          : { 'Content-Type': 'application/json' },
+      headers: {
+        ...opsi.header,
+        ...(opsi.mentah
+          ? { 'Content-Type': opsi.mentah.tipe, ...opsi.mentah.header }
+          : opsi.body === undefined
+            ? {}
+            : { 'Content-Type': 'application/json' }),
+      },
       body: opsi.mentah ? opsi.mentah.isi : opsi.body === undefined ? undefined : JSON.stringify(opsi.body),
       cache: 'no-store',
     });
@@ -83,6 +88,11 @@ const PESAN: Record<string, string> = {
   pin_tidak_sama: 'Kedua PIN tidak sama. Ketik ulang.',
   pin_berubah: 'PIN nama ini baru saja direset guru. Pilih namamu lagi untuk membuat PIN baru.',
   terkunci: 'Nama ini terkunci karena PIN salah 5 kali. Minta guru membuka kuncinya.',
+  belum_mulai: 'Ujian belum dimulai.',
+  tab_tidak_aktif: 'Ujian sedang dibuka di tab lain. Tekan "Lanjutkan di tab ini" bila ingin memakai tab ini.',
+  versi_bentrok: 'Ada dua versi jawaban. Pilih teks yang ingin dipakai.',
+  dijeda: 'Ujian sedang dijeda pengawas. Tunggu sampai dilanjutkan.',
+  belum_tersimpan: 'Masih ada jawaban yang belum tersimpan di server. Tunggu sebentar, lalu coba lagi.',
   kesalahan_server: 'Terjadi kesalahan di server. Coba lagi sebentar lagi.',
 };
 

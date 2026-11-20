@@ -26,6 +26,11 @@ import { pesertaGuruRouter } from './routes/peserta-guru.ts';
 import { soalRouter } from './routes/soal.ts';
 import { ujianRouter } from './routes/ujian.ts';
 import { ujianAdminRouter } from './routes/ujian-admin.ts';
+import { ujianJalanRouter } from './routes/ujian-jalan.ts';
+import { pesertaUjianRouter } from './routes/peserta-ujian.ts';
+import { jawabanRouter } from './routes/jawaban.ts';
+import { buatPengecek } from './pengecek.ts';
+import { buatHubSse } from './sse.ts';
 
 export type AppDeps = {
   config: Config;
@@ -38,7 +43,8 @@ export type AppDeps = {
   jam?: Jam;
   opsi?: Partial<OpsiKeamanan>;
 };
-export type CreatedApp = { app: Express; close: () => Promise<void> };
+// `pengecek` dijalankan start.ts tiap detik (detak, jeda otomatis, kumpul otomatis); tes memanggilnya langsung.
+export type CreatedApp = { app: Express; close: () => Promise<void>; pengecek: () => void };
 
 // Kode error tetap untuk kesalahan dari sisi klien. Klien (mis. autosave) memakai kode ini untuk
 // memutuskan: kirim ulang (koneksi putus) atau berhenti dan beri tahu peserta (jawaban terlalu besar).
@@ -49,6 +55,26 @@ function clientErrorCode(type: unknown, status: number): string {
   if (status === 404) return 'tidak_ditemukan';
   return 'permintaan_tidak_valid';
 }
+
+// Content-Security-Policy production:
+// - script-src 'self' + 'wasm-unsafe-eval': hanya skrip dari server ini; wasm dibutuhkan dekoder gambar PDF.js.
+//   Tanpa 'unsafe-inline'/'unsafe-eval', skrip sisipan (XSS) tidak bisa jalan.
+// - style-src 'unsafe-inline': Vue & lapisan teks PDF.js memasang atribut style (posisi teks), bukan skrip.
+// - img/font data: & blob:: gambar & font yang dibuat PDF.js di memori.
+// - connect-src 'self': fetch, SSE, dan unduhan PDF hanya ke server ini.
+export const CSP_PRODUCTION = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data: blob:",
+  "connect-src 'self'",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
 
 export async function createApp({
   config,
@@ -64,7 +90,9 @@ export async function createApp({
     opsi: { ...OPSI_KEAMANAN_BAWAAN, ...opsi },
     originPublik: config.originPublik,
     uploadDir: config.uploadDir,
+    sse: buatHubSse(),
   };
+  const pengecek = buatPengecek(konteks);
   const app = express();
   // Tidak memberi tahu dunia luar bahwa server memakai Express.
   app.disable('x-powered-by');
@@ -77,16 +105,27 @@ export async function createApp({
   // - nosniff: browser tidak menebak jenis berkas (mencegah teks dianggap skrip).
   // - frame: halaman ujian tidak bisa disisipkan di iframe situs lain (clickjacking).
   // - no-referrer: alamat halaman ujian tidak bocor ke situs lain.
-  // CSP lengkap (sumber skrip/gaya) ditambahkan saat pembaca PDF dipasang di Fase 4.
+  // - CSP: di production hanya skrip/berkas dari server ini sendiri yang boleh jalan (lihat CSP_PRODUCTION).
+  //   Mode development memakai CSP longgar karena Vite menyuntikkan skrip hot reload.
+  const csp = config.mode === 'development' ? "frame-ancestors 'none'" : CSP_PRODUCTION;
   app.use((_req, res, next) => {
     res.set({
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
-      'Content-Security-Policy': "frame-ancestors 'none'",
+      'Content-Security-Policy': csp,
       'Referrer-Policy': 'no-referrer',
     });
     next();
   });
+
+  // Berkas pendukung PDF.js (peta karakter, font standar, dekoder gambar wasm, profil warna) disajikan
+  // langsung dari paket npm, tanpa CDN. Dipakai pembaca PDF siswa untuk buku yang fontnya tidak tertanam.
+  for (const folder of ['cmaps', 'standard_fonts', 'wasm', 'iccs']) {
+    app.use(
+      `/pdfjs/${folder}`,
+      express.static(join(NODE_MODULES_DIR, 'pdfjs-dist', folder), { fallthrough: false, maxAge: '7d', index: false }),
+    );
+  }
 
   // Jawaban esai dikirim sebagai JSON; 1 MB jauh di atas panjang esai normal,
   // tetapi tetap membatasi kiriman raksasa yang membebani server.
@@ -106,6 +145,10 @@ export async function createApp({
   app.use('/api', pdfRouter(konteks));
   app.use('/api', pesertaGuruRouter(konteks));
   app.use('/api', ujianAdminRouter(konteks));
+  app.use('/api', ujianJalanRouter(konteks));
+  // Rute siswa setelah masuk: wajib sesi peserta (dipasang di dalam pesertaUjianRouter untuk /api/peserta).
+  app.use('/api', pesertaUjianRouter(konteks));
+  app.use('/api', jawabanRouter(konteks));
   // Rute /api yang tidak dikenal dijawab JSON 404, bukan halaman HTML aplikasi.
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'tidak_ditemukan' });
@@ -195,5 +238,12 @@ export async function createApp({
   };
   app.use(onError);
 
-  return { app, close: closeFrontend };
+  return {
+    app,
+    close: async () => {
+      konteks.sse.tutupSemua();
+      await closeFrontend();
+    },
+    pengecek: () => pengecek.putaran(),
+  };
 }

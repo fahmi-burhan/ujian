@@ -70,4 +70,6 @@ Aplikasi web ujian esai untuk satu kelas (~30 peserta), dipakai sebagai **latiha
 - Tata letak: `server/` (Express, rute, DB), `shared/` (skema Zod & utilitas yang dipakai kedua sisi), `client/` (Vue), `migrations/` (SQL bernomor), `tests/`.
 - Saat menguji server dari tool Bash di Windows, `kill -INT` tidak sampai ke proses Node. Pakai `Start-Process` + `Stop-Process` di PowerShell.
 - `better-sqlite3` memakai binary bawaan paket (Windows & Linux x64). Install script-nya ditolak lewat `allowScripts` di package.json, jadi tidak perlu Visual Studio Build Tools.
-- Deploy ke VPS ditulis saat deploy pertama (Fase 4).
+- Deploy ke VPS: [docs/DEPLOY.md](docs/DEPLOY.md) (aaPanel + nginx + pm2 lewat `ecosystem.config.cjs`, satu proses).
+- Alur siswa (Fase 4): waktu dihitung di `server/waktu-ujian.ts` (selalu dari kolom DB, tanpa penghitung di memori). `server/pengecek.ts` dijalankan tiap detik oleh start.ts; tes memanggilnya lewat `a.pengecek()` / `a.majukanBerdetak(ms)`. Semua SSE lewat `server/sse.ts` + `server/siaran.ts`. Autosave klien ada di `client/src/autosave.ts` tanpa Vue/DOM, dites di `tests/autosave.test.ts`. Urutan pemeriksaan di `server/routes/jawaban.ts` mengikuti DESAIN §5 dan tidak boleh ditukar.
+- Uji SSE di tes: `klien.aliran(path)` dari `tests/bantuan.ts` (menunggu event dengan `tunggu(nama, ke)`).

@@ -80,6 +80,7 @@ export const KODE_GALAT = [
   'input_tidak_valid', 'belum_masuk', 'asal_tidak_sah', 'tidak_ditemukan', 'server_sibuk',
   'status_tidak_sesuai', 'transisi_tidak_sah', 'belum_lengkap', 'nama_sudah_ada', 'batas_tercapai', 'bukan_pdf',
   'csv_kosong', 'csv_terlalu_banyak',
+  'belum_mulai', 'tab_tidak_aktif', 'versi_bentrok', 'dijeda', 'belum_tersimpan',
   'login_salah', 'kode_salah', 'pin_salah', 'pin_tidak_sama', 'pin_berubah', 'terkunci',
   'json_tidak_valid', 'terlalu_besar', 'permintaan_terputus', 'permintaan_tidak_valid', 'kesalahan_server',
 ] as const;
@@ -91,4 +92,8 @@ export const GalatSchema = z.object({
   sisa: z.number().int().optional(),
   // Hanya untuk belum_lengkap: daftar hal yang harus dilengkapi sebelum ujian dibuka.
   masalah: z.array(z.string()).optional(),
+  // Hanya untuk versi_bentrok: jawaban yang tersimpan di server (milik siswa itu sendiri).
+  versi: z.number().int().optional(),
+  isi: z.string().optional(),
+  ditandai: z.boolean().optional(),
 });

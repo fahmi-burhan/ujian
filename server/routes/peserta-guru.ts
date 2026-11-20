@@ -134,6 +134,8 @@ export function pesertaGuruRouter(k: Konteks): Router {
       catatAksiGuru(k, res, id, 'hapus_peserta', { peserta_id: pid });
       sentuhUjian(k, id);
     })();
+    // Siswa yang masih menunggu di layar "ditutup kembali" diberi tahu, bukan dibiarkan menunggu selamanya.
+    k.sse.tutupPeserta((kon) => kon.pesertaId === pid, 'sesi_dicabut', { alasan: 'dihapus_penguji' });
     res.status(204).end();
   });
 

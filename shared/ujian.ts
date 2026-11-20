@@ -6,6 +6,7 @@
 // berisi rubrik & jawaban acuan, jadi tidak boleh dipakai untuk respons peserta/proyektor (§8.1).
 import { z } from 'zod';
 import { STATUS_PESERTA, STATUS_UJIAN } from './auth.ts';
+import { WaktuSchema } from './peserta.ts';
 
 export const BATAS = {
   judul: 200,
@@ -161,6 +162,8 @@ export const UjianDetailSchema = z
     soal: z.array(SoalGuruSchema),
     pdf: z.array(PdfInfoSchema),
     jumlah_peserta: z.number().int(),
+    // Sisa waktu global (tanpa perpanjangan per peserta); null sebelum Mulai.
+    waktu: WaktuSchema.nullable(),
   })
   .strict();
 export type UjianDetail = z.infer<typeof UjianDetailSchema>;

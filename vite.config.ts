@@ -15,5 +15,8 @@ export default defineConfig({
     // Hasil build diletakkan di dist/ di akar proyek; Express menyajikannya di production.
     outDir: fileURLToPath(new URL('./dist', import.meta.url)),
     emptyOutDir: true,
+    // PDF.js (build legacy) ±505 kB dan sudah dipisah ke chunk sendiri yang hanya dimuat saat pembaca PDF
+    // tampil; batas peringatan dinaikkan agar peringatan lain tidak tenggelam.
+    chunkSizeWarningLimit: 600,
   },
 });
