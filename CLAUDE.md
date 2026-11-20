@@ -9,7 +9,8 @@ Aplikasi web ujian esai untuk satu kelas (~30 peserta), dipakai sebagai **latiha
 - Server: Node 24, Express, better-sqlite3, migrasi SQL mentah (`.sql` bernomor), Zod, TypeScript dengan **type stripping** (Node menjalankan `.ts` langsung, tanpa build server).
 - Klien: Vue 3 (SFC) + Vite + Tailwind + **daisyUI** (komponen & tema), ikon **Font Awesome Free** yang dipasang lewat npm dan dibundel Vite (tanpa CDN/kit eksternal), dibangun ke `dist/` lalu disajikan Express (monolith, satu port).
 - Tes: `node:test` bawaan Node.
-- Dependensi baru di luar daftar ini **wajib ditandai** di docs/PLAN.md (bagian Dependensi) beserta alasannya sebelum dipasang. Yang sudah disetujui: `pdfjs-dist` (PDF.js, pembaca PDF di dalam halaman), `daisyui`, `@fortawesome/fontawesome-free`, `vue-router`. Yang masih menunggu: pustaka unggah berkas, SDK penyedia AI.
+- Dependensi baru di luar daftar ini **wajib ditandai** di docs/PLAN.md (bagian Dependensi) beserta alasannya sebelum dipasang. Yang sudah disetujui: `pdfjs-dist` (PDF.js, pembaca PDF di dalam halaman), `daisyui`, `@fortawesome/fontawesome-free`, `vue-router`. Yang masih menunggu: SDK penyedia AI. Pustaka unggah tidak dipakai: PDF dikirim sebagai body mentah lewat `express.raw`.
+- Desain yang disetujui ada di [docs/DESAIN.md](docs/DESAIN.md) (state machine, aturan waktu, autosave, kontrak API, daftar putih payload). Ikuti dokumen itu; perubahan desain harus ditanyakan dulu ke pemilik.
 
 ### Aturan type stripping (sering bikin error saat runtime)
 - Dilarang: `enum`, `namespace`, parameter properties di constructor, decorator. Pakai objek `as const` + union type.
