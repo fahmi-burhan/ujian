@@ -4,7 +4,7 @@
   rilis/tarik rilis, dan unduh nilai (CSV untuk Excel).
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
   Memanggil: GET /api/ujian/:id/penilaian, PATCH .../terlambat/:tid, POST .../{mulai-penilaian,rilis,tarik-rilis},
-             PUT .../penilaian/:pid/:soalId, POST .../penilaian/setujui/:soalId, GET .../nilai.csv; shared/nilai.ts
+             PUT .../penilaian/:pid/:soalId, POST .../penilaian/setujui/:soalId, GET .../nilai.xlsx & nilai.csv; shared/nilai.ts
              (rumus yang sama dengan server, untuk pratinjau angka).
   Penilaian per soal (bukan per siswa) agar guru menilai satu soal untuk semua siswa sekaligus: lebih cepat dan
   lebih konsisten. Teks jawaban dirender sebagai teks ({{ }}), tidak pernah sebagai HTML.
@@ -246,9 +246,12 @@ function nilaiAkhir(pid: number): string {
                 <i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Tarik rilis
               </button>
               <span class="flex-1"></span>
-              <a v-if="data.ujian.status !== 'selesai'" class="btn btn-sm" :href="`/api/ujian/${id}/nilai.csv`" download>
-                <i class="fa-solid fa-file-csv" aria-hidden="true"></i> Unduh nilai (Excel/CSV)
-              </a>
+              <template v-if="data.ujian.status !== 'selesai'">
+                <a class="btn btn-sm" :href="`/api/ujian/${id}/nilai.xlsx`" download>
+                  <i class="fa-solid fa-file-excel" aria-hidden="true"></i> Unduh nilai (Excel)
+                </a>
+                <a class="link text-xs" :href="`/api/ujian/${id}/nilai.csv`" download title="CSV format Indonesia: pemisah ';', desimal koma">CSV</a>
+              </template>
             </div>
             <p v-if="data.ujian.status === 'dirilis'" class="text-sm text-base-content/70">
               Siswa sekarang melihat nilai, kriteria yang dicapai, catatan Anda, dan jawaban acuan. Untuk mengubah nilai,

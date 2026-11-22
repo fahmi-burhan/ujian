@@ -4,6 +4,7 @@
 // Dipanggil oleh: `npm test`. Memanggil: tests/bantuan.ts, server lewat HTTP sungguhan.
 // Mengacu pada docs/DESAIN.md §3, §9, §12 (keputusan 22 Nov) dan aturan keras #1, #8, #10.
 import { randomUUID } from 'node:crypto';
+import { crc32, inflateRawSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NilaiPesertaSchema, nilaiSoal, nilaiUjian, PenilaianGuruSchema, selCsv } from '../shared/nilai.ts';
@@ -36,6 +37,29 @@ async function masukSiswa(id: number): Promise<Klien> {
   const r = await k.minta('POST', '/api/peserta/masuk', { body: { kode: 'ABC234', peserta_id: id, pin: '1234', pin_ulang: '1234' } });
   assert.equal(r.status, 204, JSON.stringify(r.body));
   return k;
+}
+
+// Membaca isi zip (.xlsx) lewat header lokal: memastikan berkas buatan server/xlsx.ts benar-benar zip yang sah
+// (CRC cocok, deflate bisa dibuka), tanpa pustaka tambahan.
+function isiZip(zip: Buffer): Map<string, string> {
+  const hasil = new Map<string, string>();
+  let i = 0;
+  while (zip.readUInt32LE(i) === 0x04034b50) {
+    const metode = zip.readUInt16LE(i + 8);
+    const crc = zip.readUInt32LE(i + 14);
+    const padat = zip.readUInt32LE(i + 18);
+    const panjangNama = zip.readUInt16LE(i + 26);
+    const ekstra = zip.readUInt16LE(i + 28);
+    const nama = zip.subarray(i + 30, i + 30 + panjangNama).toString('utf8');
+    const awal = i + 30 + panjangNama + ekstra;
+    const data = zip.subarray(awal, awal + padat);
+    const isi = metode === 8 ? inflateRawSync(data) : data;
+    assert.equal(crc32(isi) >>> 0, crc, `CRC ${nama}`);
+    hasil.set(nama, isi.toString('utf8'));
+    i = awal + padat;
+  }
+  assert.equal(zip.readUInt32LE(i), 0x02014b50, 'direktori pusat menyusul');
+  return hasil;
 }
 
 const aksi = async (path: string, body?: unknown) => guru.minta('POST', `/api/ujian/1/${path}`, body === undefined ? {} : { body });
@@ -187,5 +211,28 @@ describe('alur penilaian manual', () => {
     const lain = a.klien();
     await lain.minta('POST', '/api/penguji/masuk', { body: { username: 'guru2', password: PASSWORD_GURU } });
     assert.equal((await lain.minta('GET', '/api/ujian/1/nilai.csv')).status, 404);
+    assert.equal((await lain.minta('GET', '/api/ujian/1/nilai.xlsx')).status, 404);
+  });
+
+  test('unduh .xlsx: zip OOXML sah, angka sebagai angka, nomor "01" tetap teks, teks "=..." bukan rumus', async () => {
+    a.db.prepare("UPDATE peserta SET nama = '=HYPERLINK(\"http://x\")' WHERE id = 2").run();
+    await guru.minta('PATCH', '/api/ujian/1/terlambat/1', { body: { keputusan: 'ditolak' } });
+    await aksi('mulai-penilaian');
+    await nilaiPut(1, 11, { k1: 5, k2: 4 });
+    const r = await fetch(`${a.baseUrl}/api/ujian/1/nilai.xlsx`, { headers: { cookie: guru.headerCookie('/api/ujian/1/nilai.xlsx') ?? '' } });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('content-type'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    const berkas = isiZip(Buffer.from(await r.arrayBuffer()));
+    assert.deepEqual([...berkas.keys()].sort(), [
+      '[Content_Types].xml', '_rels/.rels', 'xl/_rels/workbook.xml.rels', 'xl/styles.xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml',
+    ]);
+    const lembar = berkas.get('xl/worksheets/sheet1.xml') ?? '';
+    assert.equal(lembar.includes('<f>'), false, 'tidak ada rumus');
+    // Baris Budi (urut nama: =HYPERLINK..., Budi, Cici → baris 3): nilai soal 1 = 70, nilai akhir 52,5 sebagai angka.
+    assert.match(lembar, /<c r="C3" s="2"><v>70<\/v><\/c>/);
+    assert.match(lembar, /<c r="E3" s="2"><v>52.5<\/v><\/c>/);
+    assert.match(lembar, /<c r="B3" t="inlineStr"><is><t xml:space="preserve">01<\/t><\/is><\/c>/);
+    assert.match(lembar, /<c r="A2" t="inlineStr"><is><t xml:space="preserve">=HYPERLINK\(&quot;http:\/\/x&quot;\)<\/t>/);
+    assert.match(lembar, /<t xml:space="preserve">tidak hadir<\/t>/);
   });
 });

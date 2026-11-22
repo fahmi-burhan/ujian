@@ -298,7 +298,8 @@ Index dan alasannya:
 | GET | `/api/ujian/:id/penilaian` | penguji pemilik | selesai, penilaian, dirilis | — | — | `{ujian, soal (dengan rubrik & acuan), peserta (hadir), tidak_hadir, jawaban, nilai, terlambat (menunggu)}` | Fase 6 (manual) |
 | PUT | `/api/ujian/:id/penilaian/:pid/:soalId` | penguji pemilik | penilaian | `{skor: {id_kriteria: skor}, catatan, setujui}` | setiap kriteria rubrik wajib ada, skor = salah satu level; catatan ≤ 2.000 | nilai jawaban | Siswa tidak hadir → 409. Angka nilai dihitung dari skor (tidak disimpan) |
 | POST | `/api/ujian/:id/penilaian/setujui/:soalId` | penguji pemilik | penilaian | — | — | `{jumlah}` | "Setujui semua" draf satu soal (aturan keras #8) |
-| GET | `/api/ujian/:id/nilai.csv` | penguji pemilik | penilaian, dirilis | — | — | CSV | UTF-8 BOM, `;`, desimal koma, sel `= + - @` diberi `'`. Satu baris per siswa: nama, nomor, nilai tiap soal (0–100), nilai akhir; "belum dinilai" / "belum lengkap" / "tidak hadir" |
+| GET | `/api/ujian/:id/nilai.xlsx` | penguji pemilik | penilaian, dirilis | — | — | Excel .xlsx | **Unduhan utama** (§12 no. 12, diubah 22 Nov): dibuat `server/xlsx.ts` tanpa pustaka; angka sebagai angka, teks sebagai inline string (tidak pernah rumus), judul kolom tebal & dibekukan. Isi sama dengan CSV |
+| GET | `/api/ujian/:id/nilai.csv` | penguji pemilik | penilaian, dirilis | — | — | CSV | Alternatif, format Indonesia | UTF-8 BOM, `;`, desimal koma, sel `= + - @` diberi `'`. Satu baris per siswa: nama, nomor, nilai tiap soal (0–100), nilai akhir; "belum dinilai" / "belum lengkap" / "tidak hadir" |
 | POST | `/api/ujian/:id/tautan-proyektor` | penguji pemilik | semua | — | — | `{kode, kedaluwarsa_at}` | Kode 8 karakter, 10 menit, sekali pakai |
 | POST | `/api/proyektor/masuk` | publik | semua | `{kode}` | 8 karakter dari alfabet tanpa huruf mirip | 204 + cookie `sesi_proyektor` | Halaman `/p` untuk mengetik kode |
 | GET | `/api/proyektor/saya` | proyektor | semua | — | — | `{ujian{judul, status}}` | Ditambahkan Fase 2 |
@@ -403,4 +404,4 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 9. **Hasil untuk siswa (22 Nov):** setelah dirilis, siswa melihat nilai akhir; per soal: nilai, jawabannya, kriteria & level yang dicapai, catatan guru, dan jawaban acuan. Aturan keras #1 diubah untuk ini (hanya status `dirilis`).
 10. **Jawaban kosong (22 Nov):** otomatis 0 saat penilaian dimulai.
 11. **Tidak hadir (22 Nov):** tidak dinilai, ditulis "tidak hadir".
-12. **Unduhan nilai (22 Nov):** CSV untuk Excel (`;`, BOM, desimal koma), tanpa dependensi baru.
+12. **Unduhan nilai (22 Nov, diubah):** CSV ternyata berantakan di Windows berformat en-US (pemisah `,`, desimal `.`), dan format CSV yang rapi di semua pengaturan tidak ada. Unduhan utama menjadi **.xlsx** (dibuat sendiri tanpa dependensi baru), dengan tautan CSV format Indonesia sebagai alternatif.

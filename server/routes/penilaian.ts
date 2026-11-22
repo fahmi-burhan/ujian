@@ -10,8 +10,8 @@
 // - Skor wajib lengkap & sah untuk rubrik (setiap kriteria, salah satu level). Angka nilai dihitung, tidak disimpan.
 // - penilaian → dirilis: semua jawaban siswa yang hadir sudah disetujui (aturan keras #8).
 // - Unduhan CSV: UTF-8 BOM, pemisah ';', sel berbahaya diberi awalan ' (aturan keras #10).
-//   Batasan yang diketahui: Excel membaca nomor "01" sebagai angka 1 (nol di depan hilang). Tidak diakali dengan
-//   rumus ="01", karena sel rumus justru yang dicegah aturan #10.
+//   Unduhan utama .xlsx (server/xlsx.ts): angka tersimpan sebagai angka, nomor "01" tetap teks, dan teks tidak
+//   pernah menjadi rumus. CSV tetap ada sebagai alternatif; di CSV, Excel membaca "01" sebagai 1.
 // - Mulai penilaian baru boleh setelah toleransi 10 dtk sesudah Akhiri lewat (simpanan terakhir masih diterima).
 import { Router } from 'express';
 import type { Response } from 'express';
@@ -25,6 +25,7 @@ import type { Konteks } from '../konteks.ts';
 import { beritahuPantau } from '../pantau.ts';
 import { kirimStatusPeserta, siarkanStatus } from '../siaran.ts';
 import { catatAksiGuru, ParamPeserta, ParamUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
+import { buatXlsx } from '../xlsx.ts';
 import { muatSoalGuru } from './ujian.ts';
 
 const ParamNilai = ParamPeserta.extend({ soalId: z.coerce.number().int().positive() });
@@ -282,18 +283,16 @@ export function penilaianRouter(k: Konteks): Router {
     );
   });
 
-  // Unduh nilai: satu baris per siswa. Nilai per soal dalam persen (0–100) + nilai akhir. Jawaban yang belum
-  // disetujui ditulis "belum dinilai"; siswa yang tidak hadir ditulis "tidak hadir" (keputusan pemilik 22 Nov).
-  router.get('/ujian/:id/nilai.csv', (req, res) => {
-    const { id } = validasi(ParamUjian, req.params);
-    ujianMilikDiStatus(k, res, id, ['penilaian', 'dirilis']);
+  // Tabel nilai untuk unduhan: satu baris per siswa. Nilai per soal dalam persen (0–100) + nilai akhir, sebagai
+  // ANGKA (null = sel teks keterangan). Belum disetujui → "belum dinilai"; tidak hadir → "tidak hadir".
+  function tabelNilai(id: number): { judul: string; kepala: string[]; baris: (string | number)[][] } {
     const judul = k.db.prepare('SELECT judul FROM ujian WHERE id = ?').pluck().get(id) as string;
     const soal = muatSoalGuru(k, id);
     const { hadir, tidakHadir } = pesertaUjian(k, id);
     const nilai = new Map(bacaNilai(k, id).map((n) => [`${n.peserta_id}:${n.soal_id}`, n]));
     const kepala = ['Nama', 'Nomor', ...soal.map((s) => `Soal ${s.urutan} ${s.judul} (bobot ${s.bobot})`), 'Nilai akhir (0-100)'];
-    const baris: string[][] = [];
-    for (const p of [...hadir, ...tidakHadir].sort((a, b) => a.nama.localeCompare(b.nama, 'id'))) {
+    const baris: (string | number)[][] = [];
+    for (const p of [...hadir, ...tidakHadir].sort((x, y) => x.nama.localeCompare(y.nama, 'id'))) {
       if (p.status !== 'dikumpulkan') {
         baris.push([p.nama, p.nomor, ...soal.map(() => ''), 'tidak hadir']);
         continue;
@@ -303,17 +302,50 @@ export function penilaianRouter(k: Konteks): Router {
       baris.push([
         p.nama,
         p.nomor,
-        ...perSoal.map((n) => (n === null ? 'belum dinilai' : angka(persenSoal(n)))),
-        lengkap ? angka(nilaiUjian(soal.map((s, i) => ({ nilai: perSoal[i] as number, bobot: s.bobot })))) : 'belum lengkap',
+        ...perSoal.map((n) => (n === null ? 'belum dinilai' : persenSoal(n))),
+        lengkap ? nilaiUjian(soal.map((s, i) => ({ nilai: perSoal[i] as number, bobot: s.bobot }))) : 'belum lengkap',
       ]);
     }
-    const isi = [kepala, ...baris].map((b) => b.map(selCsv).join(';')).join('\r\n');
-    const namaBerkas = `nilai-${judul.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 60) || 'ujian'}.csv`;
+    return { judul, kepala, baris };
+  }
+
+  function namaBerkas(judul: string, ekstensi: string): string {
+    return `nilai-${judul.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 60) || 'ujian'}.${ekstensi}`;
+  }
+
+  function lampiran(res: Response, nama: string, tipe: string): void {
     res.set({
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="nilai.csv"; filename*=UTF-8''${encodeURIComponent(namaBerkas)}`,
+      'Content-Type': tipe,
+      // filename (ASCII) untuk browser lama, filename* (UTF-8) untuk nama dengan huruf non-ASCII.
+      'Content-Disposition': `attachment; filename="nilai.${nama.split('.').pop() ?? 'bin'}"; filename*=UTF-8''${encodeURIComponent(nama)}`,
       'Cache-Control': 'private, no-store',
     });
+  }
+
+  // Unduhan utama: Excel .xlsx (rapi di pengaturan wilayah Windows mana pun; keputusan pemilik 22 Nov).
+  router.get('/ujian/:id/nilai.xlsx', (req, res) => {
+    const { id } = validasi(ParamUjian, req.params);
+    ujianMilikDiStatus(k, res, id, ['penilaian', 'dirilis']);
+    const t = tabelNilai(id);
+    const berkas = buatXlsx({
+      nama: 'Nilai',
+      kolom: t.kepala.map((judul, i) => ({ judul, lebar: i === 0 ? 28 : i === 1 ? 10 : Math.min(40, Math.max(14, judul.length + 2)) })),
+      baris: t.baris,
+    });
+    lampiran(res, namaBerkas(t.judul, 'xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(berkas);
+  });
+
+  // Alternatif CSV format Indonesia (';', desimal koma, UTF-8 BOM). Di Windows berformat en-US, Excel tidak memecah
+  // kolomnya; karena itu .xlsx menjadi unduhan utama.
+  router.get('/ujian/:id/nilai.csv', (req, res) => {
+    const { id } = validasi(ParamUjian, req.params);
+    ujianMilikDiStatus(k, res, id, ['penilaian', 'dirilis']);
+    const t = tabelNilai(id);
+    const isi = [t.kepala, ...t.baris]
+      .map((b) => b.map((v) => selCsv(typeof v === 'number' ? angka(v) : v)).join(';'))
+      .join('\r\n');
+    lampiran(res, namaBerkas(t.judul, 'csv'), 'text/csv; charset=utf-8');
     res.send(`﻿${isi}\r\n`);
   });
 

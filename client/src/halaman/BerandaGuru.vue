@@ -88,9 +88,11 @@ async function buat(): Promise<void> {
                 <tr><th>Judul</th><th>Kode</th><th>Status</th><th>Soal</th><th>Peserta</th><th>Diubah</th><th><span class="sr-only">Aksi</span></th></tr>
               </thead>
               <tbody>
-                <tr v-for="u in daftar" :key="u.id" class="hover:bg-base-200">
+                <!-- Seluruh baris bisa diklik (permintaan pemilik 22 Nov). Judul tetap tautan agar bisa dibuka lewat
+                     keyboard/Tab atau di tab baru; garis bawah saat hover dimatikan. -->
+                <tr v-for="u in daftar" :key="u.id" class="hover:bg-base-200 cursor-pointer" @click="router.push(`/guru/ujian/${u.id}`)">
                   <td>
-                    <RouterLink :to="`/guru/ujian/${u.id}`" class="link link-hover font-medium">{{ u.judul }}</RouterLink>
+                    <RouterLink :to="`/guru/ujian/${u.id}`" class="font-medium no-underline" @click.stop>{{ u.judul }}</RouterLink>
                   </td>
                   <td class="font-mono">{{ u.kode }}</td>
                   <td><span class="badge" :class="WARNA_STATUS_UJIAN[u.status]">{{ LABEL_STATUS_UJIAN[u.status] }}</span></td>
@@ -98,7 +100,7 @@ async function buat(): Promise<void> {
                   <td>{{ u.jumlah_peserta }}</td>
                   <td class="text-sm text-base-content/70">{{ waktuWib(u.diubah_at) }}</td>
                   <td>
-                    <button type="button" class="btn btn-xs btn-ghost" :aria-label="`Duplikasi ${u.judul}`" title="Duplikasi" @click="diduplikasi = u">
+                    <button type="button" class="btn btn-xs btn-ghost" :aria-label="`Duplikasi ${u.judul}`" title="Duplikasi" @click.stop="diduplikasi = u">
                       <i class="fa-solid fa-copy" aria-hidden="true"></i>
                     </button>
                   </td>
