@@ -1,23 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Ikon tab browser (client/index.html): kepala padat dengan otak sebagai celah, pena emas menulis satu garis.
-       Warna utama mengikuti tema terang/gelap browser. Bentuk harus sama dengan client/src/komponen/LogoUjian.vue. -->
+  <!-- Ikon tab browser (client/index.html): otak padat dengan lekuk sebagai celah + pena yang menulis. Satu warna,
+       mengikuti tema terang/gelap browser. Bentuk harus sama dengan client/src/komponen/LogoUjian.vue. -->
   <style>
-    .utama { fill: #1e293b; }
+    .isi { fill: #1e293b; }
     .garis { stroke: #1e293b; }
-    @media (prefers-color-scheme: dark) { .utama { fill: #f5f1e8; } .garis { stroke: #f5f1e8; } }
+    @media (prefers-color-scheme: dark) { .isi { fill: #f5f1e8; } .garis { stroke: #f5f1e8; } }
   </style>
   <defs>
-    <mask id="otak">
+    <mask id="celah">
       <rect width="64" height="64" fill="#fff"/>
-      <g stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M26 20.5C23.5 18.5 19.5 19.5 19 23C15.5 23.5 14.5 28 17 30C15 32.5 17 36.5 20.5 36C21.5 38.5 25 39 26 37Z"/>
-        <path d="M26 20.5C28.5 18.5 32.5 19.5 33 23C36.5 23.5 37.5 28 35 30C37 32.5 35 36.5 31.5 36C30.5 38.5 27 39 26 37"/>
-        <path d="M21 27.5C22.5 26.5 24 27 24 28.5M31 27.5C29.5 26.5 28 27 28 28.5"/>
+      <g transform="translate(28 26) scale(2) translate(-26 -28.5)" stroke="#000" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <path d="M26 21.6V36.4"/>
+        <path d="M20.4 26.6C21.9 25.8 23.4 26.4 23.4 28M31.6 26.6C30.1 25.8 28.6 26.4 28.6 28"/>
+        <path d="M18.6 31.6C20 32.4 21.8 32 22.4 30.8M33.4 31.6C32 32.4 30.2 32 29.6 30.8"/>
       </g>
+      <path d="M42 50L54 38L57.5 41.5L45.5 53.5Z M41 51L44.5 54.5L39 56.5Z" fill="#000" stroke="#000" stroke-width="6" stroke-linejoin="round"/>
     </mask>
   </defs>
-  <path class="utama" mask="url(#otak)" d="M13 60V50.5C7.6 46.4 4.5 40.4 4.5 33.5C4.5 21.3 14.3 12 26.5 12C36.6 12 43.4 18.3 44.5 26.5L47.6 34.4C48 35.5 47.2 36.6 46 36.6H43.5V41.5C43.5 44.5 41.2 46.8 38.2 46.8H34V60Z"/>
-  <path fill="#f59e0b" d="M51 44L60.5 34.5L63.5 37.5L54 47Z"/>
-  <path fill="#f59e0b" d="M50 45L53 48L48.5 49.5Z"/>
-  <path class="garis" stroke-width="3" stroke-linecap="round" d="M40 56H55"/>
+  <path class="isi" mask="url(#celah)" transform="translate(28 26) scale(2) translate(-26 -28.5)" d="M26 20.5C23.5 18.5 19.5 19.5 19 23C15.5 23.5 14.5 28 17 30C15 32.5 17 36.5 20.5 36C21.5 38.5 25 39 26 37C27 39 30.5 38.5 31.5 36C35 36.5 37 32.5 35 30C37.5 28 36.5 23.5 33 23C32.5 19.5 28.5 18.5 26 20.5Z"/>
+  <path class="isi" d="M42 50L54 38L57.5 41.5L45.5 53.5Z"/>
+  <path class="isi" d="M41 51L44.5 54.5L39 56.5Z"/>
+  <path class="garis" stroke-width="3" stroke-linecap="round" d="M20 59.5H35"/>
 </svg>
