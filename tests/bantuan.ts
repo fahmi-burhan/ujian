@@ -13,6 +13,8 @@ import type { Db } from '../server/db/connection.ts';
 import { runMigrations } from '../server/db/migrate.ts';
 import { hashRahasia } from '../server/auth/kata-sandi.ts';
 import type { OpsiKeamanan } from '../server/konteks.ts';
+import type { AdapterAi } from '../server/ai/adapter.ts';
+import type { LayananAi } from '../server/ai/antrean.ts';
 import { MIGRATIONS_DIR } from '../server/paths.ts';
 
 export const T0 = 1_795_000_000_000;
@@ -30,6 +32,8 @@ export type AplikasiUji = {
   // pengecek menganggap server "mati" selama jam dimajukan dan menjeda ujian otomatis).
   majukanBerdetak: (ms: number) => void;
   klien: () => Klien;
+  // Antrean penilaian AI (tes menunggu dengan a.ai.diam()).
+  ai: LayananAi;
   berhenti: () => void;
 };
 
@@ -185,20 +189,24 @@ export type AliranUji = {
   tutup: () => void;
 };
 
-// `env` meniru isi .env (mis. { ORIGIN_PUBLIK: 'https://ujian.contoh.id' }).
+// `env` meniru isi .env (mis. { ORIGIN_PUBLIK: 'https://ujian.contoh.id' }). `adapterAi` = adapter AI tiruan
+// (tanpa argumen: AI nonaktif, seperti .env tanpa kunci API; tes tidak pernah memanggil penyedia sungguhan).
 export async function mulaiAplikasiUji(
   opsi: Partial<OpsiKeamanan> = {},
   env: Record<string, string> = {},
+  adapterAi: AdapterAi | null = null,
 ): Promise<AplikasiUji> {
   const db = openDatabase(':memory:');
   runMigrations(db, MIGRATIONS_DIR);
   const uploadDir = mkdtempSync(join(tmpdir(), 'ujian-tes-'));
   let sekarang = T0;
-  const { app, close, pengecek } = await createApp({
+  const { app, close, pengecek, ai } = await createApp({
     config: loadConfig({ UPLOAD_DIR: uploadDir, ...env }, { mode: 'test' }),
     db,
     jam: () => sekarang,
     opsi: { jedaGagalLoginMs: 0, jedaKodeSalahMs: 0, ...opsi },
+    adapterAi,
+    jedaUlangAiMs: 0,
   });
   const server: Server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
@@ -219,6 +227,7 @@ export async function mulaiAplikasiUji(
       }
     },
     klien: () => new Klien(baseUrl),
+    ai,
     berhenti: () => {
       void close();
       server.closeAllConnections();

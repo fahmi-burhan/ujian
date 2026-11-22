@@ -76,7 +76,7 @@ async function ubahTampilan(mode: 'nama' | 'inisial'): Promise<void> {
             placeholder="mis. Kerjakan semua soal. Boleh membuka buku PDF di halaman ujian."></textarea>
           <span class="text-xs text-base-content/60">
             <i class="fa-solid fa-eye" aria-hidden="true"></i>
-            Terlihat siswa di ruang tunggu sebelum ujian dimulai — jangan menulis isi soal di sini.
+            Terlihat siswa di ruang tunggu sebelum ujian dimulai. Jangan menulis isi soal di sini.
           </span>
         </label>
         <label class="flex flex-col gap-1 sm:w-48">

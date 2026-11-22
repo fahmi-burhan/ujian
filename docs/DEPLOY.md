@@ -60,6 +60,20 @@ ORIGIN_PUBLIK=https://ujian.domain-anda.id
 `ORIGIN_PUBLIK` harus **persis** sama dengan alamat di browser (https, tanpa garis miring di akhir). Bila
 berbeda, semua login ditolak `403`.
 
+### Mengaktifkan penilaian AI (opsional, bisa kapan saja)
+Tanpa kunci API, penilaian manual tetap jalan seperti biasa. Untuk mengaktifkan draf nilai AI:
+1. Di https://platform.claude.com: cek saldo di **Billing** (biarkan *auto-reload* **mati**), buat workspace "Ujian",
+   pasang batas bulanan di **Settings → Spend limits**, lalu buat kunci di **Settings → API Keys** dari workspace itu.
+2. Di VPS, tempel kunci ke `.env` (jangan lewat chat, jangan di-commit):
+   ```bash
+   cd ~/apps/ujian
+   nano .env        # isi baris: ANTHROPIC_API_KEY=sk-ant-...   (pengaturan AI_* lain ada di .env.example)
+   chmod 600 .env   # hanya pemilik akun yang bisa membaca berkas ini
+   pm2 restart ujian
+   pm2 logs ujian --lines 20 --nostream   # harus ada "Penilaian AI: aktif (...)"; kuncinya sendiri tidak pernah dicetak
+   ```
+3. Di halaman Penilaian, panel "Draf nilai AI" menampilkan pilihan model, perkiraan biaya, dan sisa batas bulan ini.
+
 ## 3. Cek setelah deploy
 ```bash
 pm2 logs ujian --lines 30                       # harus ada "Server ujian berjalan di http://127.0.0.1:8132"

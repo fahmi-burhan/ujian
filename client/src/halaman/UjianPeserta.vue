@@ -706,7 +706,7 @@ async function ulangiMuat(): Promise<void> {
           <h1 class="card-title">{{ saya?.nama }}</h1>
           <div role="status" class="alert">
             <i class="fa-solid fa-door-closed" aria-hidden="true"></i>
-            <span>Ujian ditutup kembali oleh guru. Tunggu di sini — halaman ini lanjut sendiri saat ujian dibuka lagi.</span>
+            <span>Ujian ditutup kembali oleh guru. Tunggu di sini, halaman ini lanjut sendiri saat ujian dibuka lagi.</span>
           </div>
           <button class="btn btn-ghost btn-sm self-start" type="button" @click="keluar">
             <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Keluar
@@ -852,7 +852,7 @@ async function ulangiMuat(): Promise<void> {
       </div>
       <div v-if="koneksiPutus && !sesiDicabut && !tabLain && tahap === 'siap'" role="status" class="alert alert-warning">
         <i class="fa-solid fa-wifi" aria-hidden="true"></i>
-        <span>Koneksi ke server terputus. Tetap mengetik saja — jawaban disimpan di laptop & dikirim otomatis.</span>
+        <span>Koneksi ke server terputus. Tetap mengetik saja, jawaban disimpan di laptop & dikirim otomatis.</span>
       </div>
       <div v-if="penyimpananGagal" role="alert" class="alert alert-error">
         <i class="fa-solid fa-hard-drive" aria-hidden="true"></i>

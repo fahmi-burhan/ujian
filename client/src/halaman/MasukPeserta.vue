@@ -14,6 +14,7 @@ import { DaftarNamaResponsSchema } from '../../../shared/auth.ts';
 import type { DaftarNamaRespons } from '../../../shared/auth.ts';
 import { PANJANG_KODE_UJIAN, rapikanKode } from '../../../shared/alfabet.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import LogoUjian from '../komponen/LogoUjian.vue';
 
 type Langkah = 'kode' | 'nama' | 'pin';
 type PesertaPilihan = DaftarNamaRespons['peserta'][number];
@@ -123,7 +124,7 @@ function hanyaAngka(nilai: string): string {
     <div class="card bg-base-100 shadow-xl w-full max-w-lg">
       <div class="card-body gap-4">
         <h1 class="card-title text-2xl">
-          <i class="fa-solid fa-pen-to-square text-primary" aria-hidden="true"></i>
+          <LogoUjian class="w-10 h-10" />
           Masuk Ujian
         </h1>
 
@@ -163,7 +164,7 @@ function hanyaAngka(nilai: string): string {
         <!-- Langkah 2: pilih nama -->
         <div v-else-if="langkah === 'nama' && daftar" class="flex flex-col gap-3">
           <p class="text-base-content/80">
-            <span class="font-semibold">{{ daftar.judul }}</span> — pilih namamu.
+            <span class="font-semibold">{{ daftar.judul }}</span> | pilih namamu.
           </p>
           <label class="input input-bordered flex items-center gap-2">
             <i class="fa-solid fa-magnifying-glass text-base-content/50" aria-hidden="true"></i>
@@ -205,7 +206,7 @@ function hanyaAngka(nilai: string): string {
           </div>
           <div v-else class="alert text-sm">
             <i class="fa-solid fa-key" aria-hidden="true"></i>
-            <span>Buat PIN 4 angka. Ingat baik-baik — PIN ini dipakai bila kamu perlu masuk lagi.</span>
+            <span>Buat PIN 4 angka. Ingat baik-baik, PIN ini dipakai bila kamu perlu masuk lagi.</span>
           </div>
 
           <label class="form-control w-full">

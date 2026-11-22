@@ -18,6 +18,7 @@ import { JENIS_KEPERGIAN, LABEL_EVENT, ProyektorDataSchema } from '../../../shar
 import type { ProyektorData } from '../../../shared/pantau.ts';
 import { formatSisa } from '../../../shared/time.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import LogoUjian from '../komponen/LogoUjian.vue';
 import { durasiSingkat, jamWib } from '../label.ts';
 
 const route = useRoute();
@@ -237,7 +238,7 @@ onBeforeUnmount(() => {
       <form class="card bg-base-200 w-full max-w-md" @submit.prevent="tukarKode(kode)">
         <div class="card-body gap-3">
           <h1 class="card-title text-2xl">
-            <i class="fa-solid fa-display" aria-hidden="true"></i>
+            <LogoUjian class="w-10 h-10" />
             Layar Proyektor
           </h1>
           <p class="text-base-content/70">Ketik kode proyektor dari dasbor guru (berlaku 10 menit, sekali pakai).</p>

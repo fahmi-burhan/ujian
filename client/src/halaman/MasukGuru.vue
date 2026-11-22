@@ -8,6 +8,7 @@
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { api, pesanGalat } from '../api.ts';
+import LogoUjian from '../komponen/LogoUjian.vue';
 
 const router = useRouter();
 const route = useRoute();
@@ -42,7 +43,7 @@ async function masuk(): Promise<void> {
     <form class="card bg-base-100 shadow-xl w-full max-w-sm" @submit.prevent="masuk">
       <div class="card-body gap-3">
         <h1 class="card-title text-2xl">
-          <i class="fa-solid fa-chalkboard-user text-primary" aria-hidden="true"></i>
+          <LogoUjian class="w-10 h-10" />
           Masuk Guru
         </h1>
         <div v-if="galat" role="alert" class="alert alert-error">

@@ -236,7 +236,10 @@ Rincian kolom, tipe, dan constraint ada di [migrations/0001_skema_awal.sql](../m
 | `jawaban_terlambat` | ujian_id, peserta_id, soal_id, isi, versi_dasar, diterima_at, alasan, keputusan | INTEGER/TEXT | FK komposit; keputusan ∈ menunggu/diterima/ditolak | Teks yang tiba setelah batas tidak hilang |
 | `event_integritas` | ujian_id, peserta_id, id_klien, jenis, mulai_at, mulai_klien_at, selesai_at, durasi_ms, detail_json, ditandai_wajar, catatan_penguji | INTEGER/TEXT | FK komposit (peserta, ujian); unik (peserta, id_klien) | Catatan, bukan vonis |
 | `log_aksi` | ujian_id, aktor, penguji_id, aksi, detail_json, dibuat_at | INTEGER/TEXT | aktor penguji ⇔ penguji_id terisi | Jejak aksi guru & server |
-| *(Fase 6)* `penilaian` | — | — | — | Dibuat di migrasi terpisah setelah penyedia AI dipilih |
+| `penilaian` (0003) | ujian_id, peserta_id, soal_id, skor_json, catatan, sumber, status, versi_jawaban, dinilai_at, disetujui_at | INTEGER/TEXT | PK (peserta, soal); sumber ∈ manual/otomatis_kosong/ai; disetujui ⇔ disetujui_at | Angka nilai tidak disimpan, selalu dihitung (§9) |
+| `ai_run` (0004) | ujian_id, penguji_id, model, versi_prompt, status, alasan_berhenti, dibuat_at, selesai_at | INTEGER/TEXT | maks. satu `berjalan` per ujian (index unik sebagian) | Satu kali "Nilai dengan AI" (§9a) |
+| `ai_tugas` (0004) | run_id, ujian_id, peserta_id, soal_id, status, percobaan, galat, hasil_json, versi_jawaban | INTEGER/TEXT | status ∈ menunggu/berjalan/selesai/perlu_manual/dibatalkan; selesai ⇔ hasil_json | Antrean di DB, lanjut setelah restart |
+| `ai_pemakaian` (0004) | ujian_id, run_id, model, token_masuk/tulis_cache/baca_cache/keluar, biaya_mikro_usd, dibuat_at | INTEGER/TEXT | biaya ≥ 0 (mikro-USD) | Dasar batas biaya bulanan |
 
 Index dan alasannya:
 - `soal(ujian_id, urutan)`: soal berurutan per ujian.
@@ -318,7 +321,9 @@ Index dan alasannya:
 | POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; `detail` hanya `{sinyal?, panjang?}` (strict) | 204 | Selain kondisi itu: 204 dan diabaikan. Aturan penerimaan di §6 |
 | SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua (draf: hanya event `status`) | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut`. Saat draf (ujian ditutup kembali) stream tetap dijawab 200 dengan `status` saja. FAKTA: `EventSource` yang menerima status non-200 berhenti permanen, sehingga ruang tunggu tidak akan lanjut sendiri saat ujian dibuka lagi |
 | GET | `/api/peserta/nilai` | peserta | dirilis (lainnya 409) | — | — | §8.1 | Siswa tidak hadir → `{hadir: false}` tanpa nilai |
-| *(Fase 6, AI)* | `/api/ujian/:id/penilaian/ai...` | penguji pemilik | penilaian | | | | Dirancang setelah penyedia AI dipilih; mengisi tabel `penilaian` dengan `sumber = 'ai'`, `status = 'draf'` |
+| GET | `/api/ujian/:id/ai` | penguji pemilik | penilaian, dirilis | — | — | `{tersedia, model[], model_bawaan, batas_usd_bulanan, terpakai_usd_bulan_ini, belum_dinilai, perkiraan_usd{model}, run}` | Tanpa kunci API, tanpa isi jawaban. `tersedia: false` bila `ANTHROPIC_API_KEY` kosong |
+| POST | `/api/ujian/:id/ai/mulai` | penguji pemilik | penilaian | `{model}` | model ∈ daftar §9a | 202 + status | 409 `ai_belum_diatur` / `ai_sedang_berjalan` / `tidak_ada_jawaban` / `batas_biaya` |
+| POST | `/api/ujian/:id/ai/hentikan` | penguji pemilik | penilaian, dirilis | — | — | status | Tugas yang menunggu dibatalkan; yang sedang diproses tetap disimpan |
 
 ### 8.1 Daftar putih payload (P12)
 Setiap payload punya skema Zod `.strict()` di `shared/`, dan tes otomatis memastikan kunci terlarang tidak pernah muncul.
@@ -335,6 +340,7 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 | Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji`, `dihapus_penguji` |
 | Peserta | `GET /api/peserta/nilai` (hanya `dirilis`) | `judul`, `status`, `hadir`, `nilai_akhir`, `soal[{urutan, judul, teks, bobot, porsi_persen, nilai_persen, jawaban (sendiri), acuan, catatan, kriteria[{nama, bobot, skor, skor_maks, deskriptor (level yang dicapai)}]}]`. Tanpa `rubrik_json` mentah, tanpa level lain, tanpa poin wajib |
 | Proyektor | SSE `proyektor` | `judul`, `status`, `kode` (hanya fase menunggu), `waktu{sisa_ms, jam_server, dijeda}` (global), `hadir`, `total`, `terkumpul`, `peserta[{label, status, terjawab, jumlah_soal, aktivitas{jenis: {kali, total_ms}}}]`, `terbaru[{label, jenis, durasi_ms, mulai_at}]` (maks 8; `durasi_ms` null = masih berlangsung), `jam_server`. Hanya 3 jenis kepergian yang tidak ditandai wajar |
+| Guru | `GET /penilaian` | Soal + rubrik + acuan, siswa hadir/tidak hadir, teks jawaban, nilai, kiriman terlambat, dan `saran_ai[{peserta_id, soal_id, model, status, hasil{skor, kriteria{alasan, kutipan}, catatan_siswa, indikasi_instruksi}, galat}]`. Saran AI tidak pernah dikirim ke siswa/proyektor |
 | Guru | `GET /pantau` & SSE `pantau` | `ujian{id, judul, kode, status, mode_tampil, jumlah_soal, waktu}`. Per peserta: `id`, `nama`, `nomor`, `status`, `cara_kumpul`, `tersambung`, `info_perangkat`, `terjawab`, `simpan_terakhir_at`, `sisa_ms`, `perpanjangan_ms`, `punya_pin`, `terkunci`, `aktivitas` (ringkasan per jenis, tanpa yang wajar), `terlambat_menunggu`. `event[]` (maks 300 terbaru, dengan `detail` dan tanda wajar), `log[]` (maks 100 aksi terbaru), `jam_server`. **Tanpa hash PIN, id anonim, teks soal, atau isi jawaban** |
 
 `label` = nama atau inisial sesuai `mode_tampil`. Setiap koneksi SSE baru langsung menerima `status` + `waktu` terkini (dan `snapshot`/`proyektor`), supaya event yang terlewat saat offline tidak membuat tampilan basi.
@@ -372,6 +378,16 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
   - Angka nilai tidak disimpan di DB. Yang disimpan hanya skor per kriteria (tabel `penilaian`, migrasi 0003), jadi angka selalu konsisten dengan rumus.
   - Editor rubrik menampilkan porsi kriteria (% nilai soal) dan nilai tiap level (skor ÷ skor tertinggi kriteria).
 
+## 9a. Draf nilai AI (Fase 6, keputusan pemilik 22 Nov 2026)
+- **Penyedia:** Claude lewat SDK resmi `@anthropic-ai/sdk`, di belakang antarmuka adapter (`server/ai/adapter.ts`). Adapter lain (OpenAI, model lokal lewat terowongan SSH) menyusul bila diperlukan. Tes memakai adapter tiruan.
+- **Model:** dipilih guru di halaman Penilaian setiap kali menjalankan AI: `claude-haiku-5-5` (percobaan) atau `claude-sonnet-5-5` (ujian sungguhan). Bawaannya dari `.env` (`AI_MODEL_BAWAAN`).
+- **Satu permintaan per jawaban** (siswa × soal). Jawaban satu siswa tidak bisa memengaruhi penilaian siswa lain. Isi permintaan: instruksi tetap + soal, rubrik, acuan, poin wajib (di-cache) + jawaban di dalam `<jawaban_siswa>`. Semua kurung sudut di teks jawaban (termasuk varian lebar penuh) diganti `‹ ›`, jadi tidak ada tag yang bisa terbentuk dari jawaban siswa. Tanpa nama, nomor, atau ID siswa (kecuali yang ditulis siswa sendiri di jawabannya). Prompt berversi (`VERSI_PROMPT`, tersimpan di `ai_run`).
+- **Keluaran** (structured outputs, lalu divalidasi Zod): per kriteria `{alasan, kutipan[], skor}`, `catatan_siswa`, `indikasi_instruksi{ada, keterangan}`. Ditolak bila: kriteria kurang/lebih, skor bukan level rubrik, kutipan tidak ditemukan di jawaban (setelah normalisasi Unicode, tanda kutip, spasi, huruf besar/kecil, tatweel) atau lebih pendek dari 8 karakter (kecuali jawabannya sendiri lebih pendek), skor > 0 tanpa kutipan, atau keluaran terpotong/ditolak. Gagal → dicoba sekali lagi → `perlu_manual`.
+- **Hasil:** ditulis ke `penilaian` sebagai `sumber 'ai'`, `status 'draf'`, dengan `catatan` = `catatan_siswa` (draf untuk disunting guru). Hanya untuk jawaban yang **belum punya nilai**: nilai/draf guru tidak pernah ditimpa, dan jawaban yang dinilai guru selama antrean berjalan dilewati. Alasan & kutipan hanya tampil untuk guru; siswa hanya melihat catatan yang disetujui guru. "Setujui semua" **melewati** draf AI yang ditandai berisi instruksi untuk penilai (`indikasi_instruksi.ada`); draf itu wajib diperiksa dan disetujui satu per satu.
+- **Antrean:** di DB (`ai_run`, `ai_tugas`), `AI_PARALEL` permintaan sekaligus, urut per soal. Setelah restart, tugas yang terputus dilanjutkan. Galat sementara (408/429/5xx/koneksi, setelah dicoba ulang SDK) → jeda 15 dtk lalu dicoba lagi (terbatas). Tugas yang terputus karena restart dihitung sebagai satu percobaan. Galat fatal (kunci ditolak, saldo habis, batas Console, 400) → seluruh run berhenti dengan pesan untuk guru.
+- **Batas biaya bulanan** (`AI_BATAS_USD_BULANAN`, bulan kalender UTC): sebelum tiap permintaan, terpakai + cadangan permintaan yang berjalan + cadangan konservatif permintaan ini (1 token per karakter masukan + 2.000 token, tanpa diskon cache, + seluruh `max_tokens`) ≤ batas; bila tidak, run berhenti (`batas_biaya`). Biaya dihitung dari token yang dilaporkan penyedia × tabel harga resmi (`server/ai/harga.ts`, dicek 22 Nov 2026). Biaya permintaan yang gagal divalidasi tetap dihitung. ASUMSI: permintaan yang terputus karena server mati, atau yang habis waktu lalu diulang SDK, bisa ditagih penyedia tetapi tidak tercatat. Karena itu batas di Console tetap dipasang sebagai pengaman utama.
+- **Thinking** adaptif dengan `AI_EFFORT` (bawaan `low`, paling murah). Naikkan bila pilot menunjukkan hasil kurang teliti.
+
 ## 10. Rute halaman (vue-router)
 | Rute | Peran | Isi |
 |---|---|---|
@@ -405,3 +421,5 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 10. **Jawaban kosong (22 Nov):** otomatis 0 saat penilaian dimulai.
 11. **Tidak hadir (22 Nov):** tidak dinilai, ditulis "tidak hadir".
 12. **Unduhan nilai (22 Nov, diubah):** CSV ternyata berantakan di Windows berformat en-US (pemisah `,`, desimal `.`), dan format CSV yang rapi di semua pengaturan tidak ada. Unduhan utama menjadi **.xlsx** (dibuat sendiri tanpa dependensi baru), dengan tautan CSV format Indonesia sebagai alternatif.
+13. **Penilaian AI (22 Nov):** penyedia Claude dulu; adapter OpenAI/model lokal menyusul. Model dipilih guru di halaman Penilaian (Haiku untuk percobaan, Sonnet untuk ujian sungguhan). Batas biaya dihitung per bulan (bawaan $3). AI menulis draf catatan untuk siswa yang disunting/disetujui guru. Rincian di §9a.
+14. **Tampilan (22 Nov):** nama aplikasi "Ujian" (bukan "Ujian Esai"), logo bintang delapan di atas buku terbuka (`client/public/logo.svg`, juga ikon tab), judul tab "Ujian | Halaman", dan pemisah "|" menggantikan tanda pisah di teks tampilan.

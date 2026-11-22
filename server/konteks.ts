@@ -1,5 +1,5 @@
 // server/konteks.ts — "konteks" yang dibagikan ke semua rute: database, jam, opsi keamanan, origin publik,
-// folder unggahan, dan pusat koneksi SSE.
+// folder unggahan, pusat koneksi SSE, dan antrean penilaian AI.
 // Dipanggil oleh: server/app.ts (membuatnya), server/routes/* (memakainya), tes (mengganti jam & opsi).
 // Memanggil: tidak ada.
 // Alasan jam berupa fungsi (bukan Date.now langsung): tes bisa "memajukan waktu" (mis. kode proyektor
@@ -7,6 +7,7 @@
 import type { Db } from './db/connection.ts';
 import type { Jam } from './auth/penjaga.ts';
 import type { HubSse } from './sse.ts';
+import type { LayananAi } from './ai/antrean.ts';
 
 export type OpsiKeamanan = {
   // Jeda tetap sebelum menjawab login guru yang gagal (memperlambat tebak password).
@@ -35,4 +36,6 @@ export type Konteks = {
   uploadDir: string;
   // Koneksi SSE yang sedang terbuka (server/sse.ts).
   sse: HubSse;
+  // Antrean penilaian AI (server/ai/antrean.ts); adapternya null bila kunci API belum diisi.
+  ai: LayananAi;
 };

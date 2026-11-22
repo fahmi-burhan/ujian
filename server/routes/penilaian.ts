@@ -1,6 +1,6 @@
 // server/routes/penilaian.ts — penilaian MANUAL oleh guru (Fase 6, sebelum AI): keputusan jawaban terlambat, mulai
 // penilaian, beri/ubah skor per kriteria + catatan, setujui (satu atau semua per soal), rilis & tarik rilis,
-// dan unduh nilai (CSV untuk Excel).
+// dan unduh nilai (Excel/CSV). Data halaman juga memuat saran AI terbaru (server/routes/penilaian-ai.ts mengatur antreannya).
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru dicek di app.ts untuk /api/ujian).
 // Memanggil: shared/nilai.ts (rumus & validasi), server/routes/ujian.ts (muatSoalGuru), server/routes/milik.ts,
 //            server/siaran.ts, database.
@@ -16,6 +16,8 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import { z } from 'zod';
+import { HasilAiSchema } from '../../shared/ai.ts';
+import type { SaranAi } from '../../shared/ai.ts';
 import { angka, KeputusanTerlambatSchema, masalahSkor, nilaiSoal, nilaiUjian, persenSoal, selCsv, SimpanNilaiSchema, skorNol } from '../../shared/nilai.ts';
 import { TOLERANSI_MS } from '../../shared/peserta.ts';
 import type { NilaiJawaban, PenilaianGuru, Skor } from '../../shared/nilai.ts';
@@ -79,7 +81,30 @@ function muatPenilaian(k: Konteks, ujianId: number): PenilaianGuru {
          WHERE ujian_id = ? AND keputusan = 'menunggu' ORDER BY diterima_at, id`,
       )
       .all(ujianId) as PenilaianGuru['terlambat'],
+    saran_ai: bacaSaranAi(k, ujianId),
   };
+}
+
+// Hasil AI terbaru (berhasil atau "perlu dinilai manual") untuk setiap jawaban. Tetap tampil setelah guru mengubah
+// nilainya, supaya guru bisa membandingkan.
+function bacaSaranAi(k: Konteks, ujianId: number): SaranAi[] {
+  const baris = k.db
+    .prepare(
+      `SELECT t.peserta_id, t.soal_id, t.status, t.hasil_json, t.galat, r.model
+       FROM ai_tugas t JOIN ai_run r ON r.id = t.run_id
+       WHERE t.ujian_id = ? AND t.status IN ('selesai', 'perlu_manual')
+         AND t.id = (SELECT MAX(t2.id) FROM ai_tugas t2
+                     WHERE t2.peserta_id = t.peserta_id AND t2.soal_id = t.soal_id AND t2.status IN ('selesai', 'perlu_manual'))`,
+    )
+    .all(ujianId) as { peserta_id: number; soal_id: number; status: 'selesai' | 'perlu_manual'; hasil_json: string | null; galat: string | null; model: string }[];
+  return baris.map((b) => {
+    let hasil: SaranAi['hasil'] = null;
+    if (b.hasil_json !== null) {
+      const p = HasilAiSchema.safeParse(JSON.parse(b.hasil_json));
+      hasil = p.success ? p.data : null;
+    }
+    return { peserta_id: b.peserta_id, soal_id: b.soal_id, model: b.model, status: b.status, hasil, galat: b.galat };
+  });
 }
 
 // Daftar hal yang menghalangi rilis (kosong = boleh dirilis).
@@ -233,19 +258,28 @@ export function penilaianRouter(k: Konteks): Router {
     res.json(baris);
   });
 
-  // "Setujui semua" draf untuk satu soal (aturan keras #8 mengizinkan persetujuan per soal).
+  // "Setujui semua" draf untuk satu soal (aturan keras #8 mengizinkan persetujuan per soal). Draf AI yang jawabannya
+  // ditandai AI berisi instruksi untuk penilai (kemungkinan upaya prompt injection) DILEWATI: guru wajib membukanya
+  // dan menyetujuinya satu per satu.
   router.post('/ujian/:id/penilaian/setujui/:soalId', (req, res) => {
     const { id, soalId } = validasi(ParamSoalNilai, req.params);
     ujianMilikDiStatus(k, res, id, ['penilaian']);
     const t = k.jam();
-    const jumlah = k.db.transaction(() => {
-      const n = k.db
-        .prepare("UPDATE penilaian SET status = 'disetujui', disetujui_at = ? WHERE ujian_id = ? AND soal_id = ? AND status = 'draf'")
+    const DITANDAI = `penilaian.sumber = 'ai' AND EXISTS (
+        SELECT 1 FROM ai_tugas a WHERE a.peserta_id = penilaian.peserta_id AND a.soal_id = penilaian.soal_id
+          AND a.status = 'selesai' AND json_extract(a.hasil_json, '$.indikasi_instruksi.ada') = 1)`;
+    const hasil = k.db.transaction(() => {
+      const jumlah = k.db
+        .prepare(`UPDATE penilaian SET status = 'disetujui', disetujui_at = ? WHERE ujian_id = ? AND soal_id = ? AND status = 'draf' AND NOT (${DITANDAI})`)
         .run(t, id, soalId).changes;
-      catatAksiGuru(k, res, id, 'setujui_soal', { soal_id: soalId, jumlah: n });
-      return n;
+      const dilewati = k.db
+        .prepare(`SELECT COUNT(*) FROM penilaian WHERE ujian_id = ? AND soal_id = ? AND status = 'draf' AND ${DITANDAI}`)
+        .pluck()
+        .get(id, soalId) as number;
+      catatAksiGuru(k, res, id, 'setujui_soal', { soal_id: soalId, jumlah, dilewati });
+      return { jumlah, dilewati };
     })();
-    res.json({ jumlah });
+    res.json(hasil);
   });
 
   function transisi(res: Response, id: number, aksi: string, ubah: (t: number) => number): void {

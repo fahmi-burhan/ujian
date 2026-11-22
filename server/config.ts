@@ -12,6 +12,8 @@
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { MODEL_AI } from '../shared/ai.ts';
+import type { ModelAi } from '../shared/ai.ts';
 import { ROOT_DIR } from './paths.ts';
 
 export type Mode = 'development' | 'production' | 'test';
@@ -41,6 +43,20 @@ const EnvSchema = z.object({
     .refine((nilai) => nilai === null || originSah(nilai), {
       message: 'ORIGIN_PUBLIK harus berupa alamat lengkap tanpa path, mis. https://ujian.domain.id',
     }),
+  // ---- Penilaian AI (Fase 6). Kosong = AI nonaktif, penilaian manual tetap jalan. ----
+  // Kunci API Claude. HANYA di .env server (aturan keras #5): tidak pernah dikirim ke browser atau dicatat ke log.
+  ANTHROPIC_API_KEY: z
+    .string()
+    .optional()
+    .transform((nilai) => (nilai === undefined || nilai.trim() === '' ? null : nilai.trim())),
+  // Model yang terpilih lebih dulu di halaman Penilaian (guru tetap bisa memilih model lain di sana).
+  AI_MODEL_BAWAAN: z.enum(MODEL_AI).default('claude-haiku-5-5'),
+  // Batas biaya penilaian AI per bulan kalender (UTC), dalam USD. 0 = AI tidak boleh dipakai sama sekali.
+  AI_BATAS_USD_BULANAN: z.coerce.number().min(0).max(1000).default(3),
+  // Jumlah permintaan AI yang berjalan bersamaan.
+  AI_PARALEL: z.coerce.number().int().min(1).max(8).default(3),
+  // Seberapa dalam model berpikir sebelum menjawab. low = paling murah & cepat.
+  AI_EFFORT: z.enum(['low', 'medium', 'high']).default('low'),
 });
 
 // Origin sah = skema http/https + host (+ port), tanpa path, query, atau garis miring di akhir.
@@ -64,6 +80,14 @@ export type Config = {
   trustProxy: boolean;
   // null = tidak diisi (laptop): Origin dibandingkan dengan protokol + host permintaan.
   originPublik: string | null;
+  ai: {
+    // null = kunci belum diisi. Jangan pernah mencetak objek config ini ke log.
+    apiKey: string | null;
+    modelBawaan: ModelAi;
+    batasUsdBulanan: number;
+    paralel: number;
+    effort: 'low' | 'medium' | 'high';
+  };
 };
 
 // Memuat <akar proyek>/.env bila ada. Variabel yang SUDAH ada di lingkungan (mis. diset pm2 atau
@@ -93,5 +117,12 @@ export function loadConfig(
     uploadDir: resolve(rootDir, value.UPLOAD_DIR),
     trustProxy: value.TRUST_PROXY,
     originPublik: value.ORIGIN_PUBLIK,
+    ai: {
+      apiKey: value.ANTHROPIC_API_KEY,
+      modelBawaan: value.AI_MODEL_BAWAAN,
+      batasUsdBulanan: value.AI_BATAS_USD_BULANAN,
+      paralel: value.AI_PARALEL,
+      effort: value.AI_EFFORT,
+    },
   };
 }

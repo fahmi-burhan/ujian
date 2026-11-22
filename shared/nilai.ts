@@ -7,6 +7,7 @@
 // - nilai soal  = Σ(skor ÷ skor_maks_kriteria × bobot_kriteria) ÷ Σ bobot_kriteria → 0–1
 // - nilai ujian = Σ(nilai_soal × bobot_soal) ÷ Σ bobot_soal × 100 → 0–100, dibulatkan 1 desimal
 import { z } from 'zod';
+import { SaranAiSchema } from './ai.ts';
 import { STATUS_PESERTA, STATUS_UJIAN } from './auth.ts';
 import type { Kriteria, Rubrik } from './ujian.ts';
 import { SoalGuruSchema } from './ujian.ts';
@@ -82,6 +83,10 @@ export const SimpanNilaiSchema = z
   .strict();
 export type SimpanNilai = z.infer<typeof SimpanNilaiSchema>;
 
+// Respons POST /api/ujian/:id/penilaian/setujui/:soalId. `dilewati` = draf AI yang ditandai berisi instruksi untuk
+// penilai; tidak ikut disetujui massal.
+export const SetujuiSemuaSchema = z.object({ jumlah: z.number().int(), dilewati: z.number().int() }).strict();
+
 export const KeputusanTerlambatSchema = z.object({ keputusan: z.enum(['diterima', 'ditolak']) }).strict();
 
 // ---- Respons guru: GET /api/ujian/:id/penilaian ----
@@ -119,6 +124,8 @@ export const PenilaianGuruSchema = z
         })
         .strict(),
     ),
+    // Saran AI terbaru per jawaban (alasan & kutipan per kriteria): HANYA untuk guru, tidak pernah ke siswa.
+    saran_ai: z.array(SaranAiSchema),
   })
   .strict();
 export type PenilaianGuru = z.infer<typeof PenilaianGuruSchema>;

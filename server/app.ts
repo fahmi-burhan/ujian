@@ -36,6 +36,11 @@ import { pesertaUjianRouter } from './routes/peserta-ujian.ts';
 import { jawabanRouter } from './routes/jawaban.ts';
 import { buatPengecek } from './pengecek.ts';
 import { buatHubSse } from './sse.ts';
+import type { AdapterAi } from './ai/adapter.ts';
+import { buatLayananAi } from './ai/antrean.ts';
+import type { LayananAi } from './ai/antrean.ts';
+import { buatAdapterClaude } from './ai/claude.ts';
+import { penilaianAiRouter } from './routes/penilaian-ai.ts';
 
 export type AppDeps = {
   config: Config;
@@ -47,9 +52,13 @@ export type AppDeps = {
   // Hanya untuk tes: jam palsu (memajukan waktu) dan opsi keamanan (jeda/batas lebih kecil).
   jam?: Jam;
   opsi?: Partial<OpsiKeamanan>;
+  // Hanya untuk tes: adapter AI tiruan (menggantikan Claude; tidak ada panggilan jaringan) dan jeda coba ulang 0.
+  adapterAi?: AdapterAi | null;
+  jedaUlangAiMs?: number;
 };
 // `pengecek` dijalankan start.ts tiap detik (detak, jeda otomatis, kumpul otomatis); tes memanggilnya langsung.
-export type CreatedApp = { app: Express; close: () => Promise<void>; pengecek: () => void };
+// `ai` dipakai tes untuk menunggu antrean AI selesai (diam()).
+export type CreatedApp = { app: Express; close: () => Promise<void>; pengecek: () => void; ai: LayananAi };
 
 // Kode error tetap untuk kesalahan dari sisi klien. Klien (mis. autosave) memakai kode ini untuk
 // memutuskan: kirim ulang (koneksi putus) atau berhenti dan beri tahu peserta (jawaban terlalu besar).
@@ -88,7 +97,10 @@ export async function createApp({
   distDir = DIST_DIR,
   jam = Date.now,
   opsi = {},
+  adapterAi,
+  jedaUlangAiMs = 15_000,
 }: AppDeps): Promise<CreatedApp> {
+  const adapter = adapterAi !== undefined ? adapterAi : config.ai.apiKey ? buatAdapterClaude(config.ai.apiKey) : null;
   const konteks: Konteks = {
     db,
     jam,
@@ -96,7 +108,21 @@ export async function createApp({
     originPublik: config.originPublik,
     uploadDir: config.uploadDir,
     sse: buatHubSse(jam),
+    ai: buatLayananAi({
+      db,
+      jam,
+      adapter,
+      opsi: {
+        modelBawaan: config.ai.modelBawaan,
+        batasMikroUsd: Math.round(config.ai.batasUsdBulanan * 1_000_000),
+        paralel: config.ai.paralel,
+        effort: config.ai.effort,
+        jedaUlangMs: jedaUlangAiMs,
+      },
+    }),
   };
+  // Antrean AI yang terputus karena server mati dilanjutkan (job tersimpan di DB).
+  konteks.ai.pulihkan();
   const pengecek = buatPengecek(konteks);
   const app = express();
   // Tidak memberi tahu dunia luar bahwa server memakai Express.
@@ -154,6 +180,7 @@ export async function createApp({
   app.use('/api', ujianJalanRouter(konteks));
   app.use('/api', pantauRouter(konteks));
   app.use('/api', penilaianRouter(konteks));
+  app.use('/api', penilaianAiRouter(konteks));
   // Rute siswa setelah masuk: wajib sesi peserta (dipasang di dalam pesertaUjianRouter untuk /api/peserta).
   app.use('/api', pesertaUjianRouter(konteks));
   app.use('/api', eventRouter(konteks));
@@ -255,5 +282,6 @@ export async function createApp({
       await closeFrontend();
     },
     pengecek: () => pengecek.putaran(),
+    ai: konteks.ai,
   };
 }

@@ -18,7 +18,19 @@ test('memakai nilai bawaan bila .env kosong; DB_PATH dihitung dari akar proyek',
     uploadDir: resolve(ROOT_DIR, 'uploads'),
     trustProxy: false,
     originPublik: null,
+    // AI nonaktif sampai ANTHROPIC_API_KEY diisi; batas biaya bawaan $3/bulan.
+    ai: { apiKey: null, modelBawaan: 'claude-haiku-5-5', batasUsdBulanan: 3, paralel: 3, effort: 'low' },
   });
+});
+
+test('pengaturan AI: kunci dipangkas, kosong = nonaktif, model & batas divalidasi', () => {
+  assert.equal(loadConfig({ ANTHROPIC_API_KEY: '   ' }, { mode: 'test' }).ai.apiKey, null);
+  assert.equal(loadConfig({ ANTHROPIC_API_KEY: ' sk-ant-contoh ' }, { mode: 'test' }).ai.apiKey, 'sk-ant-contoh');
+  const c = loadConfig({ AI_MODEL_BAWAAN: 'claude-sonnet-5-5', AI_BATAS_USD_BULANAN: '1.5' }, { mode: 'test' });
+  assert.equal(c.ai.modelBawaan, 'claude-sonnet-5-5');
+  assert.equal(c.ai.batasUsdBulanan, 1.5);
+  assert.throws(() => loadConfig({ AI_MODEL_BAWAAN: 'gpt-x' }, { mode: 'test' }), /AI_MODEL_BAWAAN/);
+  assert.throws(() => loadConfig({ AI_BATAS_USD_BULANAN: '-1' }, { mode: 'test' }), /AI_BATAS_USD_BULANAN/);
 });
 
 test('mode berasal dari pemanggil, bukan dari NODE_ENV di .env', () => {

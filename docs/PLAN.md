@@ -10,7 +10,7 @@ Dibuat 20 Nov 2026. Target ujian pertama: **sekitar Jumat, 4 Des 2026** (±2 pek
 | Sifat ujian | Latihan yang menyenangkan & menantang, bukan resmi | Risiko joki jarak jauh diterima. Mitigasinya ringan: kode ujian hanya tampil di proyektor kelas. |
 | Tampilan pelanggaran di proyektor | Nama peserta | Teks netral. Penguji bisa mengganti ke inisial. |
 | Data ke AI | Hanya ID acak + teks jawaban | AI hanya memberi draf. Guru mengecek ulang bersama siswa. |
-| Penyedia AI | Claude atau OpenAI, **kunci API belum ada** | Adapter untuk keduanya + adapter tiruan untuk tes. Penilaian dilakukan setelah ujian, jadi kunci yang terlambat tidak menghambat hari-H. |
+| Penyedia AI | **Claude** (22 Nov), kunci diisi pemilik di `.env` | Adapter Claude + adapter tiruan untuk tes; OpenAI/model lokal menyusul bila perlu. Penilaian dilakukan setelah ujian, jadi kunci yang terlambat tidak menghambat hari-H. |
 | HP di ruangan | Siswa tidak membawa HP | Pemantauan fokus pada tab/jendela lain di laptop (mis. chatbot AI di browser). |
 | PDF sebelum Mulai | Boleh | Dimuat di ruang tunggu dengan PDF.js + HTTP Range. Tautan PDF per soal tetap disembunyikan sampai Mulai. |
 | Real-time | SSE, tanpa WebSocket | Push hanya satu arah (server → klien); kiriman klien lewat POST. |
@@ -40,7 +40,7 @@ Dibuat 20 Nov 2026. Target ujian pertama: **sekitar Jumat, 4 Des 2026** (±2 pek
 | `vue-router` | Disetujui (20 Nov) | Alamat halaman & tombol Back untuk halaman guru/peserta/proyektor, plus pemisahan kode per peran. |
 | `@fortawesome/fontawesome-free` | Disetujui | Ikon. Hanya CSS inti + set *solid* yang diimpor, dibundel Vite tanpa CDN. |
 | Pustaka unggah (`multer`/`busboy`) | **Tidak diperlukan** | PDF dikirim sebagai body mentah `application/pdf` (`express.raw`, bawaan Express). CSV peserta dikirim sebagai teks JSON. |
-| SDK penyedia AI | Menunggu | Bisa diganti `fetch` biasa bila penyedia sudah dipilih. |
+| `@anthropic-ai/sdk` | Disetujui (22 Nov), terpasang 1.12.0 (versi dikunci) | SDK resmi Claude untuk draf nilai AI (`server/ai/claude.ts`): kelas galat bertipe, coba ulang otomatis untuk 429/5xx, structured outputs. Hanya dipakai server; tidak masuk bundel klien. Ikut terpasang (transitif): `json-schema-to-ts`, `ts-algebra`, `@babel/runtime`, `standardwebhooks`, `@stablelib/base64`, `fast-sha256`, `@opentelemetry/api` (API saja, tanpa pengirim data). |
 
 Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vue-tsc` (memeriksa tipe di berkas .vue), `@types/node@24` (disamakan dengan runtime Node 24), `@types/express`, `@types/better-sqlite3`, `vite` 8, `@vitejs/plugin-vue`, `tailwindcss` 4, `@tailwindcss/vite`, `vue`. Tidak ada `concurrently`/`nodemon`: Vite berjalan sebagai middleware di dalam Express dan `node --watch` menangani restart.
 
@@ -57,7 +57,7 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 ## Menunggu konfirmasi pemilik
 | Hal | Dibutuhkan di | Pertanyaan |
 |---|---|---|
-| Penyedia AI & kunci API | Fase 6 | Claude atau OpenAI? |
+| Kunci API Claude | Sebelum penilaian AI pertama | Pemilik membuat akun & kunci di Claude Console, lalu mengisinya sendiri di `.env` VPS (22 Nov: "saya aturkan api key di akhir"). |
 
 ## Jadwal & fase
 | Tanggal | Fase | Isi | Selesai bila |
@@ -68,7 +68,7 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 | 24–25 Nov | **3. Penyusunan ujian** ✅ 20 Nov | CRUD ujian/soal/rubrik/kunci, unggah PDF, impor peserta CSV, pratinjau, validasi kelengkapan | Ujian contoh lengkap bisa disiapkan |
 | 26–28 Nov | **4. Alur peserta** ✅ 21 Nov (deploy 22 Nov) | Ruang tunggu, gerbang mulai, navigasi bebas, autosave berversi + buffer lokal, timer, pembaca PDF, submit/auto-submit | Ujian bisa dikerjakan dari awal sampai akhir. **Deploy pertama ke VPS** |
 | 29–30 Nov | **5. Integritas & proyektor** ✅ 22 Nov | Event browser → SSE, peringatan ke peserta, dasbor penguji, layar proyektor, jeda/perpanjangan | Event muncul ≤ 3 dtk di dasbor & proyektor |
-| 30 Nov–1 Des | **6. Penilaian** ◐ manual 22 Nov (AI menunggu keputusan) | Penilaian manual dulu, lalu AI: antrean, prompt berversi, validasi Zod, tinjau/setujui, rilis, ekspor CSV | Draf nilai AI bisa ditinjau & dirilis |
+| 30 Nov–1 Des | **6. Penilaian** ✅ 22 Nov (AI siap, menunggu kunci API) | Penilaian manual dulu, lalu AI: antrean, prompt berversi, validasi Zod, tinjau/setujui, rilis, ekspor CSV | Draf nilai AI bisa ditinjau & dirilis |
 | 2 Des | **7. Gladi resik** | Uji di VPS dengan 5+ perangkat, simulasi putus Wi-Fi & restart pm2, uji beban 30 peserta, README + checklist hari-H | Tidak ada jawaban hilang |
 | 3 Des | Pembekuan | Hanya perbaikan bug | — |
 | ~4 Des | **Ujian pertama** | — | — |
@@ -106,6 +106,10 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 - **Keputusan:** tabel `penilaian` (migrasi 0003) menyimpan skor per kriteria; angka dihitung dengan rumus bersama `shared/nilai.ts`. Penilaian per soal untuk semua siswa sekaligus. Jawaban terlambat diputuskan sebelum penilaian; jawaban kosong otomatis 0; siswa tidak hadir tidak dinilai. Rilis mensyaratkan semua jawaban siswa yang hadir disetujui. Setelah rilis siswa melihat kriteria, catatan, dan jawaban acuan; aturan keras #1 diubah atas keputusan pemilik. Unduhan CSV untuk Excel. Sebelum Fase 6 ada perbaikan dari uji pemilik: PDF bergulir bersambung, dasbor otomatis setelah Mulai, persen kriteria/level di editor rubrik, soal bisa dilihat setelah dibuka, tandai "wajar" satu klik, dan dialog tanpa animasi.
 - **Dampak ke langkah berikutnya:** penilaian AI tinggal mengisi tabel yang sama dengan `sumber = 'ai'` dan `status = 'draf'`, lalu guru menyetujui di halaman yang sama. Penyedia (Claude/OpenAI/model lokal lewat terowongan SSH) belum diputuskan.
 
+**Fase 6 bagian AI (22 Nov):**
+- **Keputusan:** Claude lewat SDK resmi (adapter + tiruan untuk tes; OpenAI/model lokal menyusul). Antrean di DB (migrasi 0004), satu permintaan per jawaban, model dipilih guru di halaman Penilaian (Haiku percobaan / Sonnet ujian sungguhan), batas biaya bulanan di aplikasi (bawaan $3) selain saldo prabayar & batas Console. Keluaran divalidasi (skor = level rubrik, kutipan ada di jawaban) lalu menjadi draf; gagal → `perlu_manual`. AI menulis draf catatan siswa; alasan & kutipan hanya untuk guru. Ditinjau `penjaga-ujian`: 2 PENTING (pembatas jawaban bisa ditembus varian tag → semua kurung sudut dinetralkan, dan "Setujui semua" melewati draf yang ditandai berisi instruksi; polling halaman Penilaian bisa menimpa isian dengan data basi → respons basi dibuang) + 10 KECIL (kutipan minimal 8 karakter, cadangan biaya lebih konservatif, restart dihitung sebagai percobaan, 408 = sementara, jeda coba ulang, dll.), semuanya ditangani. 242 tes lulus. Kunci hanya di `.env` (`ANTHROPIC_API_KEY`, kosong = AI nonaktif). Sekalian: logo, nama "Ujian", judul tab "Ujian | …", pemisah "|".
+- **Dampak ke langkah berikutnya:** begitu kunci diisi, jalankan pilot: nilai satu ujian percobaan dengan Haiku dan Sonnet, bandingkan dengan nilai manual pemilik, lalu sesuaikan `AI_EFFORT`/rubrik bila perlu. Harga di `server/ai/harga.ts` dicek ulang bila Anthropic mengubahnya.
+
 ## Catatan hosting (VPS)
 - Subdomain baru di aaPanel + sertifikat TLS (dibuat pemilik). Port aplikasi **8132** (keputusan pemilik 20 Nov 2026, juga nilai bawaan `PORT`); nginx meneruskan ke `127.0.0.1:8132`.
 - SSE di belakang nginx: header `X-Accel-Buffering: no` + heartbeat 15 dtk.
@@ -122,4 +126,5 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 - Rencana cadangan bila Wi-Fi kelas putus: siswa tetap bisa mengetik karena jawaban disimpan di browser dan dikirim ulang otomatis saat tersambung. Penguji menjeda ujian bila putusnya lama, lalu memberi perpanjangan waktu. Siswa tidak membawa HP, jadi tidak ada hotspot cadangan untuk seluruh kelas.
 
 ## Pertanyaan terbuka
-- Pilihan akhir Claude/OpenAI dan kunci API. Paling lambat dibutuhkan saat penilaian ujian pertama, bukan saat ujian berlangsung.
+- Kunci API Claude (diisi pemilik di `.env` VPS). Paling lambat dibutuhkan saat penilaian ujian pertama, bukan saat ujian berlangsung.
+- Hasil pilot AI vs nilai manual: apakah Haiku cukup, atau Sonnet perlu untuk ujian sungguhan.

@@ -592,7 +592,7 @@ async function cabutProyektor(): Promise<void> {
             <ul v-else class="flex flex-col divide-y divide-base-200 max-h-96 overflow-auto">
               <li v-for="e in eventTampil" :key="e.id" class="py-2 flex flex-wrap items-center gap-x-3 gap-y-1" :class="{ 'opacity-50': e.ditandai_wajar }">
                 <span class="font-mono text-sm">{{ jamWib(e.mulai_at) }}</span>
-                <span class="font-medium">{{ namaPeserta.get(e.peserta_id) ?? '—' }}</span>
+                <span class="font-medium">{{ namaPeserta.get(e.peserta_id) ?? '(tidak dikenal)' }}</span>
                 <span>{{ LABEL_EVENT[e.jenis] }}</span>
                 <span v-if="lamaEvent(e)" class="text-sm text-base-content/70">· {{ lamaEvent(e) }}</span>
                 <span v-if="teksDetail(e)" class="text-xs text-base-content/60">{{ teksDetail(e) }}</span>

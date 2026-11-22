@@ -1,18 +1,22 @@
 <!--
   client/src/halaman/PenilaianUjian.vue — penilaian manual oleh guru (alamat "/guru/ujian/:id/nilai"): putuskan jawaban
   terlambat, mulai penilaian, nilai per soal (pilih level tiap kriteria + catatan untuk siswa), setujui, rekap nilai,
-  rilis/tarik rilis, dan unduh nilai (CSV untuk Excel).
+  rilis/tarik rilis, unduh nilai (Excel/CSV), serta draf nilai AI (pilih model, perkiraan biaya, kemajuan antrean, dan
+  saran AI per jawaban: skor, alasan & kutipan per kriteria; hanya untuk guru).
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
   Memanggil: GET /api/ujian/:id/penilaian, PATCH .../terlambat/:tid, POST .../{mulai-penilaian,rilis,tarik-rilis},
-             PUT .../penilaian/:pid/:soalId, POST .../penilaian/setujui/:soalId, GET .../nilai.xlsx & nilai.csv; shared/nilai.ts
+             PUT .../penilaian/:pid/:soalId, POST .../penilaian/setujui/:soalId, GET .../nilai.xlsx & nilai.csv,
+             GET .../ai, POST .../ai/mulai & .../ai/hentikan; shared/nilai.ts
              (rumus yang sama dengan server, untuk pratinjau angka).
   Penilaian per soal (bukan per siswa) agar guru menilai satu soal untuk semua siswa sekaligus: lebih cepat dan
   lebih konsisten. Teks jawaban dirender sebagai teks ({{ }}), tidak pernah sebagai HTML.
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { StatusAiSchema } from '../../../shared/ai.ts';
+import type { ModelAi, SaranAi, StatusAi } from '../../../shared/ai.ts';
 import { onBeforeRouteLeave, RouterLink, useRoute } from 'vue-router';
-import { angka, masalahSkor, NilaiJawabanSchema, nilaiSoal, nilaiUjian, PenilaianGuruSchema, persenSoal, skorMaks } from '../../../shared/nilai.ts';
+import { angka, masalahSkor, NilaiJawabanSchema, SetujuiSemuaSchema, nilaiSoal, nilaiUjian, PenilaianGuruSchema, persenSoal, skorMaks } from '../../../shared/nilai.ts';
 import type { PenilaianGuru, Skor } from '../../../shared/nilai.ts';
 import type { SoalGuru } from '../../../shared/ujian.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
@@ -86,17 +90,98 @@ onBeforeRouteLeave(() =>
   jumlahKotor.value === 0 || window.confirm(`${jumlahKotor.value} nilai belum disimpan dan akan hilang. Tetap tinggalkan halaman?`),
 );
 
+// Penanda urutan: respons muat() yang dimulai SEBELUM simpanan terakhir guru (atau disusul muat() yang lebih baru)
+// dibuang, supaya potret basi dari polling tidak mengembalikan isian ke nilai lama lalu ikut tersimpan.
+let nomorMuat = 0;
+let nomorMutasi = 0;
+let sedangMuat = false;
+
 async function muat(): Promise<void> {
+  const ke = ++nomorMuat;
+  const mutasiAwal = nomorMutasi;
+  sedangMuat = true;
   try {
     const d = await api('GET', `/api/ujian/${id.value}/penilaian`, { skema: PenilaianGuruSchema });
+    if (ke !== nomorMuat || mutasiAwal !== nomorMutasi) return;
     data.value = d;
     siapkanIsian(d);
     if (soalAktifId.value === null || !d.soal.some((s) => s.id === soalAktifId.value)) soalAktifId.value = d.soal[0]?.id ?? null;
   } catch (e) {
-    galat.value = pesanGalat(e);
+    if (ke === nomorMuat) galat.value = pesanGalat(e);
+  } finally {
+    if (ke === nomorMuat) sedangMuat = false;
   }
 }
 watch(id, () => void muat(), { immediate: true });
+
+// ---- Draf nilai AI ----
+const statusAi = ref<StatusAi | null>(null);
+const modelAi = ref<ModelAi>('claude-haiku-5-5');
+const modelDipilih = ref(false);
+let pemantauAi: ReturnType<typeof setInterval> | null = null;
+const aiBerjalan = computed(() => statusAi.value?.run?.status === 'berjalan');
+const saranMap = computed(() => new Map((data.value?.saran_ai ?? []).map((s) => [kunci(s.peserta_id, s.soal_id), s])));
+const saran = (pid: number, sid: number): SaranAi | undefined => saranMap.value.get(kunci(pid, sid));
+const totalTugas = computed(() => Object.values(statusAi.value?.run?.jumlah ?? {}).reduce((n, v) => n + v, 0));
+const tugasTuntas = computed(() => {
+  const j = statusAi.value?.run?.jumlah;
+  return j ? (j.selesai ?? 0) + (j.perlu_manual ?? 0) + (j.dibatalkan ?? 0) : 0;
+});
+const namaModel = (mid: string): string => statusAi.value?.model.find((m) => m.id === mid)?.nama ?? mid;
+
+async function muatAi(): Promise<void> {
+  if (!data.value || !['penilaian', 'dirilis'].includes(data.value.ujian.status)) {
+    statusAi.value = null;
+    return;
+  }
+  try {
+    statusAi.value = await api('GET', `/api/ujian/${id.value}/ai`, { skema: StatusAiSchema });
+    if (!modelDipilih.value) modelAi.value = statusAi.value.model_bawaan;
+  } catch {
+    // Panel AI sekadar tidak tampil; penilaian manual tidak terganggu.
+  }
+}
+watch(() => data.value?.ujian.status, () => void muatAi());
+
+// Selama antrean AI berjalan, status & draf baru dimuat ulang tiap 3 dtk. Polling dilewati selama guru sedang
+// menyimpan, masih punya isian yang belum disimpan, atau muat sebelumnya belum selesai (tidak tumpang tindih).
+watch(aiBerjalan, (jalan) => {
+  if (pemantauAi) clearInterval(pemantauAi);
+  pemantauAi = null;
+  if (!jalan) return;
+  pemantauAi = setInterval(() => {
+    void muatAi();
+    if (!sibuk.value && !sedangMuat && jumlahKotor.value === 0) void muat();
+  }, 3000);
+});
+// Saat antrean baru selesai, muat sekali lagi agar draf terakhir tampil.
+watch(aiBerjalan, (jalan, sebelum) => {
+  if (sebelum && !jalan) void muat();
+});
+onBeforeUnmount(() => {
+  if (pemantauAi) clearInterval(pemantauAi);
+});
+
+function usdTeks(n: number): string {
+  if (n > 0 && n < 0.01) return '< $0,01';
+  return `$${n.toFixed(2).replace('.', ',')}`;
+}
+
+const ALASAN_BERHENTI: Record<string, string> = {
+  guru: 'dihentikan oleh Anda',
+  batas_biaya: 'batas biaya bulanan tercapai',
+};
+
+const mulaiAi = () =>
+  jalankan(async () => {
+    await api('POST', `/api/ujian/${id.value}/ai/mulai`, { body: { model: modelAi.value } });
+    await muatAi();
+  }, 'AI mulai menilai. Draf muncul bertahap; periksa lalu setujui seperti biasa.');
+const hentikanAi = () =>
+  jalankan(async () => {
+    await api('POST', `/api/ujian/${id.value}/ai/hentikan`);
+    await muatAi();
+  }, 'Penilaian AI dihentikan. Jawaban yang belum dinilai bisa dinilai manual.');
 
 async function jalankan(kerja: () => Promise<unknown>, pesan = ''): Promise<void> {
   galat.value = '';
@@ -157,6 +242,7 @@ async function simpan(pid: number, s: SoalGuru, setujui: boolean): Promise<void>
   galat.value = '';
   sibuk.value = true;
   try {
+    nomorMutasi += 1;
     const hasil = await api('PUT', `/api/ujian/${id.value}/penilaian/${pid}/${s.id}`, {
       body: { skor: i.skor, catatan: i.catatan, setujui },
       skema: NilaiJawabanSchema,
@@ -171,8 +257,17 @@ async function simpan(pid: number, s: SoalGuru, setujui: boolean): Promise<void>
   }
 }
 
-function setujuiSemua(s: SoalGuru): Promise<void> {
-  return jalankan(() => api('POST', `/api/ujian/${id.value}/penilaian/setujui/${s.id}`), `Semua draf ${judulSoal.value.get(s.id)} disetujui.`);
+// Draf AI yang ditandai berisi instruksi untuk penilai dilewati server; guru menyetujuinya satu per satu.
+async function setujuiSemua(s: SoalGuru): Promise<void> {
+  let dilewati = 0;
+  await jalankan(async () => {
+    nomorMutasi += 1;
+    const r = await api('POST', `/api/ujian/${id.value}/penilaian/setujui/${s.id}`, { skema: SetujuiSemuaSchema });
+    dilewati = r.dilewati;
+  }, `Semua draf ${judulSoal.value.get(s.id)} disetujui.`);
+  if (dilewati > 0) {
+    info.value = `Draf ${judulSoal.value.get(s.id)} disetujui, kecuali ${dilewati} jawaban yang ditandai AI berisi instruksi untuk penilai. Periksa dan setujui satu per satu.`;
+  }
 }
 
 function statusJawaban(pid: number, sid: number): { teks: string; kelas: string } {
@@ -180,7 +275,8 @@ function statusJawaban(pid: number, sid: number): { teks: string; kelas: string 
   const n = nilaiMap.value.get(kunci(pid, sid));
   if (!n) return { teks: 'belum dinilai', kelas: 'badge-ghost' };
   if (n.sumber === 'otomatis_kosong') return { teks: 'kosong · otomatis 0', kelas: 'badge-neutral' };
-  return n.status === 'disetujui' ? { teks: 'disetujui', kelas: 'badge-success' } : { teks: 'draf', kelas: 'badge-warning' };
+  if (n.status === 'disetujui') return { teks: 'disetujui', kelas: 'badge-success' };
+  return n.sumber === 'ai' ? { teks: 'draf AI', kelas: 'badge-info' } : { teks: 'draf', kelas: 'badge-warning' };
 }
 
 // ---- Rekap ----
@@ -260,6 +356,71 @@ function nilaiAkhir(pid: number): string {
           </div>
         </section>
 
+        <!-- Draf nilai AI -->
+        <section v-if="statusAi && data.ujian.status === 'penilaian'" class="card bg-base-100 shadow">
+          <div class="card-body gap-3">
+            <h2 class="card-title"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Draf nilai AI</h2>
+            <div v-if="!statusAi.tersedia" role="status" class="alert">
+              <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+              <span>
+                Penilaian AI belum aktif: kunci API (ANTHROPIC_API_KEY) belum diisi di berkas .env server. Penilaian manual
+                tetap bisa dipakai seperti biasa.
+              </span>
+            </div>
+            <template v-else>
+              <p class="text-sm text-base-content/70">
+                AI hanya mengisi <strong>draf</strong> (skor per kriteria dan catatan untuk siswa). Anda tetap memeriksa, mengubah
+                bila perlu, lalu menyetujui. Yang dikirim ke AI hanya soal, rubrik, jawaban acuan, dan teks jawaban, tanpa nama siswa (kecuali bila siswa
+                menuliskannya sendiri di jawaban).
+              </p>
+              <div v-if="aiBerjalan && statusAi.run" class="flex flex-col gap-2">
+                <p class="text-sm flex items-center gap-2">
+                  <span class="loading loading-spinner loading-xs"></span>
+                  Menilai dengan {{ namaModel(statusAi.run.model) }}: {{ tugasTuntas }} dari {{ totalTugas }} jawaban · biaya sejauh ini
+                  {{ usdTeks(statusAi.run.biaya_usd) }}
+                </p>
+                <progress class="progress progress-info" :value="tugasTuntas" :max="Math.max(1, totalTugas)"></progress>
+                <button type="button" class="btn btn-sm btn-outline self-start" :disabled="sibuk" @click="hentikanAi">
+                  <i class="fa-solid fa-stop" aria-hidden="true"></i> Hentikan
+                </button>
+              </div>
+              <template v-else>
+                <p v-if="statusAi.run" class="text-sm">
+                  Terakhir ({{ namaModel(statusAi.run.model) }}): {{ statusAi.run.jumlah.selesai ?? 0 }} draf dibuat<template
+                    v-if="statusAi.run.jumlah.perlu_manual"
+                    >, <strong class="text-warning">{{ statusAi.run.jumlah.perlu_manual }} perlu dinilai manual</strong></template
+                  >
+                  · biaya {{ usdTeks(statusAi.run.biaya_usd) }}<template v-if="statusAi.run.status === 'dihentikan'">
+                    · berhenti: {{ ALASAN_BERHENTI[statusAi.run.alasan_berhenti ?? ''] ?? statusAi.run.alasan_berhenti }}</template
+                  >
+                </p>
+                <div class="flex flex-wrap items-end gap-3">
+                  <label class="flex flex-col gap-1">
+                    <span class="text-sm">Model</span>
+                    <select v-model="modelAi" class="select select-sm" @change="modelDipilih = true">
+                      <option v-for="m in statusAi.model" :key="m.id" :value="m.id">{{ m.nama }} | {{ m.keterangan }}</option>
+                    </select>
+                  </label>
+                  <button type="button" class="btn btn-sm btn-primary" :disabled="sibuk || statusAi.belum_dinilai === 0" @click="mulaiAi">
+                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Nilai {{ statusAi.belum_dinilai }} jawaban dengan AI
+                  </button>
+                </div>
+                <p class="text-sm">
+                  Perkiraan biaya (kasar): <strong>{{ usdTeks(statusAi.perkiraan_usd[modelAi] ?? 0) }}</strong> · terpakai bulan ini
+                  {{ usdTeks(statusAi.terpakai_usd_bulan_ini) }} dari batas {{ usdTeks(statusAi.batas_usd_bulanan) }}
+                </p>
+                <p
+                  v-if="(statusAi.perkiraan_usd[modelAi] ?? 0) > statusAi.batas_usd_bulanan - statusAi.terpakai_usd_bulan_ini"
+                  class="text-sm text-warning"
+                >
+                  Perkiraan melebihi sisa batas bulan ini. AI berhenti sendiri saat batas tercapai, dan sisanya dinilai manual.
+                </p>
+                <p v-if="statusAi.belum_dinilai === 0" class="text-sm text-base-content/60">Semua jawaban sudah punya nilai atau draf.</p>
+              </template>
+            </template>
+          </div>
+        </section>
+
         <!-- Jawaban terlambat (harus diputuskan sebelum penilaian) -->
         <section v-if="data.terlambat.length" class="card bg-base-100 shadow">
           <div class="card-body gap-2">
@@ -334,6 +495,17 @@ function nilaiAkhir(pid: number): string {
                   </div>
                   <p v-if="!(jawabanMap.get(`${p.id}:${soalAktif.id}`) ?? '').trim()" class="italic text-base-content/50">(tidak dijawab)</p>
                   <p v-else class="whitespace-pre-wrap break-words bg-base-200 rounded p-2">{{ jawabanMap.get(`${p.id}:${soalAktif.id}`) }}</p>
+                  <div v-if="saran(p.id, soalAktif.id)?.status === 'perlu_manual'" role="status" class="alert alert-warning text-sm py-2">
+                    <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                    <span>AI tidak bisa menilai jawaban ini ({{ saran(p.id, soalAktif.id)?.galat }}). Silakan nilai secara manual.</span>
+                  </div>
+                  <div v-if="saran(p.id, soalAktif.id)?.hasil?.indikasi_instruksi.ada" role="alert" class="alert alert-warning text-sm py-2">
+                    <i class="fa-solid fa-flag" aria-hidden="true"></i>
+                    <span>
+                      AI menemukan kalimat yang ditujukan ke penilai di dalam jawaban ini (diabaikan saat menilai):
+                      {{ saran(p.id, soalAktif.id)?.hasil?.indikasi_instruksi.keterangan }}
+                    </span>
+                  </div>
 
                   <fieldset :disabled="!bolehNilai || sibuk" class="flex flex-col gap-3">
                     <div v-for="kr in soalAktif.rubrik.kriteria" :key="kr.id" class="flex flex-col gap-1">
@@ -354,6 +526,16 @@ function nilaiAkhir(pid: number): string {
                           />
                           <span><strong>{{ l.skor }}/{{ skorMaks(kr) }}</strong> · {{ l.deskriptor }}</span>
                         </label>
+                      </div>
+                      <div v-if="saran(p.id, soalAktif.id)?.hasil?.kriteria[kr.id]" class="text-xs bg-info/10 rounded p-2 flex flex-col gap-1">
+                        <p>
+                          <i class="fa-solid fa-wand-magic-sparkles text-info" aria-hidden="true"></i>
+                          <strong> Saran AI: {{ saran(p.id, soalAktif.id)?.hasil?.skor[kr.id] }}/{{ skorMaks(kr) }}.</strong>
+                          {{ saran(p.id, soalAktif.id)?.hasil?.kriteria[kr.id]?.alasan }}
+                        </p>
+                        <p v-for="(q, qi) in saran(p.id, soalAktif.id)?.hasil?.kriteria[kr.id]?.kutipan ?? []" :key="qi" class="italic text-base-content/70">
+                          Bukti: "{{ q }}"
+                        </p>
                       </div>
                     </div>
                     <label class="flex flex-col gap-1">

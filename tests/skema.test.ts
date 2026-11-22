@@ -58,7 +58,7 @@ describe('struktur', () => {
       .prepare("SELECT name, strict FROM pragma_table_list WHERE schema = 'main' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations'")
       .all() as { name: string; strict: number }[];
     assert.deepEqual(tables.map((t) => t.name).sort(), [
-      'event_integritas', 'jawaban', 'jawaban_terlambat', 'jawaban_versi', 'log_aksi', 'pdf',
+      'ai_pemakaian', 'ai_run', 'ai_tugas', 'event_integritas', 'jawaban', 'jawaban_terlambat', 'jawaban_versi', 'log_aksi', 'pdf',
       'penguji', 'penilaian', 'perangkat_guru', 'peserta', 'sesi', 'soal', 'tautan_proyektor', 'ujian',
     ]);
     for (const t of tables) assert.equal(t.strict, 1, `${t.name} harus STRICT`);

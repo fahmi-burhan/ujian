@@ -163,7 +163,7 @@ describe('alur penilaian manual', () => {
     assert.equal(gagal.status, 409);
     assert.deepEqual((gagal.body as { masalah: string[] }).masalah, ['Soal 1 "Rukun wudhu": 2 jawaban belum dinilai/disetujui']);
     const setujui = await aksi('penilaian/setujui/11');
-    assert.deepEqual(setujui.body, { jumlah: 2 });
+    assert.deepEqual(setujui.body, { jumlah: 2, dilewati: 0 });
     assert.equal((await aksi('rilis')).status, 200);
 
     const n = NilaiPesertaSchema.parse((await budi.minta('GET', '/api/peserta/nilai')).body);

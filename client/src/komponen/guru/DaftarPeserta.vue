@@ -139,7 +139,7 @@ onMounted(muat);
             Contoh: {{ contohImpor.join(', ') }}<template v-if="calonImpor.length > contohImpor.length">, …</template>
           </p>
           <p v-if="kolomTertukar" class="text-sm text-warning">
-            Kolom pertama berisi angka. Urutan kolom harus Nama lalu Nomor — tukar kolomnya di Excel dulu.
+            Kolom pertama berisi angka. Urutan kolom harus Nama lalu Nomor, jadi tukar kolomnya di Excel dulu.
           </p>
           <p v-if="encodingRusak" class="text-sm text-warning">
             Ada huruf yang rusak. Di Excel simpan ulang sebagai "CSV UTF-8", atau salin-tempel langsung dari Excel.
@@ -152,7 +152,7 @@ onMounted(muat);
         <div class="text-sm">
           <p>{{ hasilImpor.ditambah.length }} nama ditambahkan<template v-if="hasilImpor.dilewati.length">, {{ hasilImpor.dilewati.length }} dilewati:</template></p>
           <ul v-if="hasilImpor.dilewati.length" class="list-disc ml-5">
-            <li v-for="d in hasilImpor.dilewati" :key="d.baris">Baris {{ d.baris }} "{{ d.nama }}" — {{ ALASAN[d.alasan] }}</li>
+            <li v-for="d in hasilImpor.dilewati" :key="d.baris">Baris {{ d.baris }} "{{ d.nama }}" | {{ ALASAN[d.alasan] }}</li>
           </ul>
         </div>
       </div>

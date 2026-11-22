@@ -10,6 +10,7 @@ import { RouterLink, useRouter } from 'vue-router';
 import { PengujiSayaSchema } from '../../../../shared/auth.ts';
 import type { PengujiSaya } from '../../../../shared/auth.ts';
 import { api } from '../../api.ts';
+import LogoUjian from '../LogoUjian.vue';
 
 const router = useRouter();
 const saya = ref<PengujiSaya | null>(null);
@@ -35,8 +36,8 @@ async function keluar(): Promise<void> {
   <header class="navbar bg-base-100 shadow-sm px-4">
     <div class="flex-1">
       <RouterLink to="/guru" class="flex items-center gap-2 text-lg font-semibold">
-        <i class="fa-solid fa-pen-to-square text-primary" aria-hidden="true"></i>
-        Ujian Esai — Guru
+        <LogoUjian class="w-8 h-8" />
+        <span>Ujian <span class="text-base-content/40 font-normal">|</span> Guru</span>
       </RouterLink>
     </div>
     <div class="flex-none flex items-center gap-3">

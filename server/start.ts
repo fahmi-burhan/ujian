@@ -28,6 +28,12 @@ export async function startServer(mode: 'development' | 'production'): Promise<v
     );
   }
   console.log(`Origin publik: ${config.originPublik ?? '(tidak diisi, mengikuti alamat permintaan)'}`);
+  // Hanya status aktif/tidak yang dicetak, TIDAK PERNAH kuncinya (aturan keras #5).
+  console.log(
+    config.ai.apiKey
+      ? `Penilaian AI: aktif (model bawaan ${config.ai.modelBawaan}, batas USD ${config.ai.batasUsdBulanan}/bulan)`
+      : 'Penilaian AI: nonaktif (ANTHROPIC_API_KEY di .env kosong); penilaian manual tetap bisa dipakai',
+  );
   if (mode === 'production' && !config.trustProxy) {
     console.warn(
       'PERINGATAN: TRUST_PROXY=false. Di VPS (di belakang nginx) isi TRUST_PROXY=true di .env, ' +

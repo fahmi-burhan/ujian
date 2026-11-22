@@ -85,7 +85,7 @@ async function simpan(): Promise<void> {
             <label class="flex flex-col gap-1 flex-1 min-w-40">
               <span class="text-sm font-medium">Rujukan buku (opsional)</span>
               <select v-model="pdfId" class="select w-full">
-                <option :value="null">— tidak ada —</option>
+                <option :value="null">(tidak ada)</option>
                 <option v-for="p in ujian.pdf" :key="p.id" :value="p.id">{{ p.nama_tampil }}</option>
               </select>
             </label>
