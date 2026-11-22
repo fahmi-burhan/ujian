@@ -18,6 +18,7 @@ import { SimpanJawabanSchema } from '../../shared/peserta.ts';
 import type { SimpanHasil } from '../../shared/peserta.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 import { penerimaanSimpan } from '../waktu-ujian.ts';
 import { pesertaDariSesi, tolakSebelumMulai, wajibTabAktif } from './peserta-ujian.ts';
 
@@ -130,6 +131,7 @@ export function jawabanRouter(k: Konteks): Router {
       }
       return { status: 200, body: { versi: versiBaru, disimpan_at: t } };
     })();
+    beritahuPantau(k, ujian.id);
     res.status(hasil.status).json(hasil.body);
   });
 

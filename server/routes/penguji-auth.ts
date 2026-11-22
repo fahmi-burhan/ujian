@@ -1,14 +1,20 @@
 // server/routes/penguji-auth.ts — login, logout, dan profil guru.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api).
 // Memanggil: server/auth/*, shared/auth.ts.
-// Endpoint (docs/DESAIN.md §8): POST /penguji/masuk, POST /penguji/keluar, GET /penguji/saya.
+// Endpoint (docs/DESAIN.md §8): POST /penguji/masuk, POST /penguji/keluar, GET /penguji/saya, serta (Fase 5)
+// GET /penguji/masuk/perangkat & DELETE /penguji/masuk/perangkat/:id. Dua yang terakhir sengaja berada di bawah
+// /penguji/masuk: hanya di path itu browser mengirim cookie perangkat_guru, sehingga server tahu perangkat mana
+// yang sedang dipakai ("perangkat ini").
 // Percobaan login untuk username yang sama diproses BERURUTAN (antrean per username), termasuk jeda
 // 1 dtk bila gagal. Jadi tebakan password paling cepat ±1 per detik per username, walau dikirim paralel.
 // Browser yang pernah berhasil login ("perangkat dikenal", server/auth/perangkat-dikenal.ts) melewati
 // antrean itu, supaya banjir tebakan dari siswa tidak membuat guru gagal masuk.
 import { Router } from 'express';
+import { z } from 'zod';
 import { PengujiMasukSchema } from '../../shared/auth.ts';
 import type { PengujiSaya } from '../../shared/auth.ts';
+import type { PerangkatGuru } from '../../shared/pantau.ts';
+import { sidik } from '../acak.ts';
 import { buatAntreanPerKunci } from '../auth/antrean.ts';
 import { cocokkanRahasia, HASH_PALSU } from '../auth/kata-sandi.ts';
 import type { JalurScrypt } from '../auth/kata-sandi.ts';
@@ -105,6 +111,7 @@ export function pengujiAuthRouter(k: Konteks): Router {
 
   router.post('/penguji/keluar', wajibGuru, (req, res) => {
     cabutSesi(k.db, k.jam(), sesiDari(res).idHash, 'keluar');
+    k.sse.tutupPantau((a) => a.jenis === 'guru' && a.sesiHash === sesiDari(res).idHash, 'sesi_dicabut', { alasan: 'keluar' });
     hapusCookieSesi(req, res, 'penguji', k.originPublik);
     res.status(204).end();
   });
@@ -116,6 +123,33 @@ export function pengujiAuthRouter(k: Konteks): Router {
     if (!penguji) throw new GalatHttp(401, 'belum_masuk');
     const body: PengujiSaya = { id: penguji.id, username: penguji.username, nama: penguji.nama };
     res.json(body);
+  });
+
+  // Daftar perangkat dikenal milik guru ini (keputusan pemilik, Fase 2). Penting bila guru pernah login di
+  // PC kelas bersama: perangkat itu bisa dilupakan dari laptop guru.
+  router.get('/penguji/masuk/perangkat', wajibGuru, (req, res) => {
+    const token = bacaCookie(req, NAMA_COOKIE_PERANGKAT);
+    const sidikIni = token ? sidik(token) : null;
+    const baris = k.db
+      .prepare(
+        `SELECT id, token_hash, info_perangkat, dibuat_at, dipakai_at, kedaluwarsa_at FROM perangkat_guru
+         WHERE penguji_id = ? AND kedaluwarsa_at > ? ORDER BY dipakai_at DESC, id DESC`,
+      )
+      .all(sesiDari(res).pengujiId, k.jam()) as (Omit<PerangkatGuru, 'ini'> & { token_hash: string })[];
+    const body: PerangkatGuru[] = baris.map(({ token_hash, ...p }) => ({ ...p, ini: token_hash === sidikIni }));
+    res.json(body);
+  });
+
+  router.delete('/penguji/masuk/perangkat/:perangkatId', wajibGuru, (req, res) => {
+    const { perangkatId } = validasi(z.object({ perangkatId: z.coerce.number().int().positive() }), req.params);
+    const dihapus = k.db
+      .prepare('DELETE FROM perangkat_guru WHERE id = ? AND penguji_id = ? RETURNING token_hash')
+      .pluck()
+      .get(perangkatId, sesiDari(res).pengujiId) as string | undefined;
+    if (dihapus === undefined) throw new GalatHttp(404, 'tidak_ditemukan');
+    const token = bacaCookie(req, NAMA_COOKIE_PERANGKAT);
+    if (token && sidik(token) === dihapus) hapusCookiePerangkat(req, res, k.originPublik);
+    res.status(204).end();
   });
 
   return router;

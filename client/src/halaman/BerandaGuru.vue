@@ -1,8 +1,8 @@
 <!--
   client/src/halaman/BerandaGuru.vue — beranda guru (alamat "/guru"): daftar ujian milik guru dan
-  form membuat ujian baru.
+  form membuat ujian baru, dan tombol Duplikasi per ujian.
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
-  Memanggil: GET /api/ujian, POST /api/ujian; komponen KepalaGuru.
+  Memanggil: GET /api/ujian, POST /api/ujian; komponen KepalaGuru, DialogDuplikasi, PerangkatDikenal.
 -->
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
@@ -10,7 +10,9 @@ import { RouterLink, useRouter } from 'vue-router';
 import { DaftarUjianSchema, UjianDetailSchema } from '../../../shared/ujian.ts';
 import type { UjianRingkas } from '../../../shared/ujian.ts';
 import { api, pesanGalat } from '../api.ts';
+import DialogDuplikasi from '../komponen/guru/DialogDuplikasi.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
+import PerangkatDikenal from '../komponen/guru/PerangkatDikenal.vue';
 import { LABEL_STATUS_UJIAN, WARNA_STATUS_UJIAN, waktuWib } from '../label.ts';
 
 const router = useRouter();
@@ -19,6 +21,7 @@ const galat = ref('');
 const judul = ref('');
 const durasi = ref(90);
 const membuat = ref(false);
+const diduplikasi = ref<UjianRingkas | null>(null);
 
 onMounted(async () => {
   try {
@@ -82,7 +85,7 @@ async function buat(): Promise<void> {
           <div v-else class="overflow-x-auto">
             <table class="table">
               <thead>
-                <tr><th>Judul</th><th>Kode</th><th>Status</th><th>Soal</th><th>Peserta</th><th>Diubah</th></tr>
+                <tr><th>Judul</th><th>Kode</th><th>Status</th><th>Soal</th><th>Peserta</th><th>Diubah</th><th><span class="sr-only">Aksi</span></th></tr>
               </thead>
               <tbody>
                 <tr v-for="u in daftar" :key="u.id" class="hover:bg-base-200">
@@ -94,12 +97,19 @@ async function buat(): Promise<void> {
                   <td>{{ u.jumlah_soal }}</td>
                   <td>{{ u.jumlah_peserta }}</td>
                   <td class="text-sm text-base-content/70">{{ waktuWib(u.diubah_at) }}</td>
+                  <td>
+                    <button type="button" class="btn btn-xs btn-ghost" :aria-label="`Duplikasi ${u.judul}`" title="Duplikasi" @click="diduplikasi = u">
+                      <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
         </div>
       </section>
+      <PerangkatDikenal />
     </main>
+    <DialogDuplikasi v-if="diduplikasi" :ujian="diduplikasi" @tutup="diduplikasi = null" />
   </div>
 </template>

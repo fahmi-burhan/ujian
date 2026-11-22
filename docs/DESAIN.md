@@ -101,6 +101,8 @@ Kumpul otomatis berjalan saat `sisa_ms ≤ −10000`, jadi simpanan yang masih d
   - Perpanjangan (global atau per peserta) membuka kembali peserta `waktu_habis` yang tercakup.
   - Peserta `manual` hanya dibuka lewat "Buka kembali" per peserta, yang wajib menyertakan jumlah menit.
 - **Koreksi salah ketik:** X boleh negatif (−120…120, bukan 0). Hasilnya dibatasi ≥ 0.
+  - Penegasan teknis (Fase 5): X negatif hanya **mengurangi perpanjangan yang sudah diberikan** (`perpanjangan_ms += X × 60000`, minimal 0), tanpa "menambal" sisa negatif ke 0 lebih dulu. Koreksi negatif tidak membuka kembali siswa.
+  - Dasbor meminta konfirmasi, karena sisa yang menjadi ≤ 0 membuat siswa langsung dikumpulkan otomatis.
 
 **Klien:**
 - Klien menerima `sisa_ms` + `jam_server`, lalu menghitung mundur dengan jam **monoton** browser (`performance.now()`) sejak data diterima (Fase 4). Jam laptop yang salah atau diubah siswa tidak berpengaruh.
@@ -193,6 +195,22 @@ Aturan kelas: dilarang membuka tab/jendela lain; siswa tidak membawa HP; layar p
 - **UPSERT** berdasarkan `id_klien` tidak pernah membuka ulang event yang sudah selesai: `selesai_at = COALESCE(event_integritas.selesai_at, excluded.selesai_at)`, begitu juga `durasi_ms`. Urutan laporan yang terbalik (selesai tiba sebelum mulai) aman.
 - **Keluar layar penuh tetapi tetap di halaman:** overlay menutup editor sampai layar penuh dipulihkan, jadi siswa tidak bisa terus mengerjakan tanpa layar penuh. Durasinya mencerminkan waktu nyata yang terlewat.
 
+**Catatan implementasi (Fase 5):**
+- Logika kepergian & antrean laporan ada di `client/src/integritas.ts` (tanpa Vue/DOM, dites dengan jam tiruan). Waktu kejadian dikirim dalam perkiraan **jam server** (`jam_server` terakhir + jam monoton), bukan jam laptop.
+- Antrean laporan disimpan di `localStorage` dan dikirim ulang (2 → 30 dtk). Kepergian yang terputus karena halaman ditutup diselesaikan saat halaman dimuat lagi.
+- Keluar layar penuh hanya dihitung bila terjadi saat mengerjakan. Esc di ruang tunggu tidak "tertinggal" lalu dihitung saat ujian dimulai.
+- Saat pencatatan **menjadi aktif** (Mulai, Lanjutkan, dibuka kembali), keadaan halaman dibaca ulang. Siswa yang saat itu sudah berada di luar halaman tercatat sejak saat aktif; sisa blur dari ruang tunggu tidak membuat waktu mulai jatuh sebelum ujian dimulai.
+- Bila klaim tab gagal saat halaman dimuat (mis. Wi-Fi putus sesaat), klaim dicoba ulang (2 → 30 dtk) dan siswa melihat pesan koneksi terputus. Himpunan salin disiapkan tanpa menunggu klaim. Tab yang diambil alih tab lain berhenti mencatat.
+- Bila browser menolak layar penuh, penutup editor tidak dipakai (tombol "Layar penuh" tetap ada untuk mencoba lagi), dan kepergian "keluar layar penuh" yang sedang berjalan bisa berakhir.
+- Dasbor & proyektor menampilkan **jam kejadian** (`mulai_klien_at`), bukan jam laporan tiba. Kepergian yang belum selesai milik siswa yang sudah dikumpulkan dihitung sampai saat ia dikumpulkan (juga saat Akhiri).
+- **TIDAK TERVERIFIKASI:** durasi kepergian di browser memakai `performance.now()`. Belum dipastikan jam ini tetap berjalan saat laptop tidur (layar ditutup) di Chrome/Edge Windows. Bila tidak, durasi menutup laptop tercatat lebih pendek. Diuji saat gladi resik (Fase 7).
+- **Akhiri** menutup kepergian yang belum dilaporkan selesai (mis. siswa menutup laptop), dengan durasi sampai saat Akhiri.
+- Server mengabaikan laporan baru setelah 500 event per siswa (pengaman laporan palsu dari DevTools).
+- **Batasan yang diketahui:** jeda yang sudah selesai hanya tercatat sebagai total di DB, tidak per rentang. Akibatnya laporan offline yang kejadiannya jatuh di jeda sebelumnya tetap diterima. Dampaknya kecil dan bukan sanksi.
+- **Himpunan salin:** memakai hash sinkron cyrb53 (53 bit) atas teks yang sudah dinormalisasi, karena keputusan blokir harus diambil di dalam event `paste` (crypto.subtle bersifat async). Teks lengkapnya tidak disimpan. Tempel yang diblokir memunculkan pesan ke siswa bahwa teks dari halaman ujian sendiri tetap boleh.
+- **Koneksi terputus:** dicatat sebagai `koneksi_putus` bila aliran SSE siswa putus > 10 dtk saat mengerjakan & ujian berlangsung, dan ditutup saat tersambung lagi. Pencatatannya ada di memori server, jadi hilang bila server dimulai ulang (server yang mati sudah menjeda ujian otomatis).
+- **Keyboard Lock:** `navigator.keyboard.lock(['Escape'])` dicoba setelah masuk layar penuh. Di Chrome/Edge, Esc lalu harus ditahan untuk keluar. Tidak didukung → Esc biasa (TIDAK TERVERIFIKASI di laptop sekolah).
+
 **Lain-lain:**
 - **Screen Wake Lock** (`navigator.wakeLock`) aktif selama mengerjakan, supaya laptop tidak tidur saat siswa lama membaca PDF.
 - **Proyektor** menampilkan pindah tab, jendela tidak aktif, dan keluar layar penuh yang tidak ditandai wajar, dalam format nama · jumlah · total durasi. **Upaya tempel dari luar hanya tampil di dasbor guru**, tidak di proyektor (keputusan pemilik 20 Nov), karena tempelannya sudah diblokir dan masih ada sisa risiko salah deteksi.
@@ -253,6 +271,7 @@ Index dan alasannya:
 | GET/POST | `/api/ujian` | penguji | — | POST: `{judul, durasi_menit}` | judul 1–200, durasi 1–600 | daftar / ujian baru | Kode ujian dibuat server |
 | GET | `/api/ujian/:id` | penguji pemilik | semua | — | — | ujian + soal + rubrik + PDF + jumlah peserta + `waktu` global (null sebelum Mulai) | `waktu` tanpa perpanjangan per peserta (Fase 4) |
 | PATCH | `/api/ujian/:id` | penguji pemilik | draf | `{judul?, petunjuk?, durasi_menit?}` | | ujian | |
+| POST | `/api/ujian/:id/duplikat` | penguji pemilik | semua | `{salin_peserta}` | boolean | 201 ujian baru (draf, kode baru) | Menyalin judul + " (salinan)", petunjuk, durasi, mode tampil, soal + rubrik + acuan, dan PDF (berkas disalin ke nama acak baru). Peserta (nama + nomor saja, id anonim baru, tanpa PIN) hanya bila `salin_peserta`. Jawaban, event, log, dan waktu tidak ikut. Ujian asal tidak berubah (§12 no. 7) |
 | PATCH | `/api/ujian/:id/tampilan` | penguji pemilik | semua | `{mode_tampil}` | nama/inisial | ujian | |
 | DELETE | `/api/ujian/:id` | penguji pemilik | draf | — | — | 204 | Juga menghapus berkas PDF di disk |
 | POST/PATCH/DELETE | `/api/ujian/:id/soal[/:soalId]` | penguji pemilik | draf | `{judul, teks, bobot, rubrik, jawaban_acuan, pdf_id?, pdf_halaman?}` | rubrik: §9; pdf_id milik ujian ini | soal | |
@@ -270,16 +289,18 @@ Index dan alasannya:
 | POST | `/api/ujian/:id/proyektor/cabut` | penguji pemilik | semua | — | — | 204 | Mencabut semua sesi proyektor ujian ini (`dicabut_penguji`) |
 | POST | `/api/ujian/:id/peserta/:pid/reset-pin` | penguji pemilik | semua kecuali draf | — | — | 204 | Menghapus PIN + mencabut semua sesi peserta itu (`direset_penguji`) + membuka kunci. Siswa membuat PIN baru. Dicatat di `log_aksi`. Draf → 409 `status_tidak_sesuai` |
 | POST | `/api/ujian/:id/peserta/:pid/buka-kunci` | penguji pemilik | semua kecuali draf | — | — | 204 | `pin_gagal` = 0, PIN tetap. Draf → 409 `status_tidak_sesuai` |
-| PATCH | `/api/ujian/:id/event/:eventId` | penguji pemilik | berlangsung → dirilis | `{ditandai_wajar, catatan_penguji}` | catatan ≤ 500 | event | |
-| GET | `/api/ujian/:id/pantau` | penguji pemilik | menunggu → selesai | — | — | snapshot (daftar field §8.1) | |
-| GET | `/api/ujian/:id/peserta/:pid/jawaban` | penguji pemilik | berlangsung → dirilis | — | — | jawaban, riwayat versi, jawaban terlambat, event | |
+| POST | `/api/ujian/:id/peserta/buka-kunci-semua` | penguji pemilik | semua kecuali draf | — | — | `{jumlah}` | Fase 5. Membuka semua nama yang terkunci (PIN tetap). Dasbor meminta konfirmasi. Dicatat di `log_aksi` |
+| PATCH | `/api/ujian/:id/event/:eventId` | penguji pemilik | semua | `{ditandai_wajar, catatan_penguji}` | catatan ≤ 500 | 204 | Event "wajar" tidak dihitung di proyektor & ringkasan |
+| GET | `/api/ujian/:id/pantau` | penguji pemilik | semua | — | — | potret (daftar field §8.1) | |
+| GET | `/api/ujian/:id/peserta/:pid/jawaban` | penguji pemilik | berlangsung → dirilis | — | — | `{peserta, soal[{id, urutan, judul}], jawaban, riwayat, terlambat, event}` | Fase 5, hanya dibaca. Keputusan jawaban terlambat & pemulihan versi di Fase 6 |
 | POST | `/api/ujian/:id/peserta/:pid/jawaban/:soalId/pulihkan` | penguji pemilik | selesai, penilaian | `{versi}` | | jawaban | Riwayat alasan `pulih` |
 | PATCH | `/api/ujian/:id/terlambat/:tid` | penguji pemilik | berlangsung → penilaian | `{keputusan}` | diterima/ditolak | 204 | Diterima = menjadi versi baru jawaban |
 | POST | `/api/ujian/:id/tautan-proyektor` | penguji pemilik | semua | — | — | `{kode, kedaluwarsa_at}` | Kode 8 karakter, 10 menit, sekali pakai |
 | POST | `/api/proyektor/masuk` | publik | semua | `{kode}` | 8 karakter dari alfabet tanpa huruf mirip | 204 + cookie `sesi_proyektor` | Halaman `/p` untuk mengetik kode |
 | GET | `/api/proyektor/saya` | proyektor | semua | — | — | `{ujian{judul, status}}` | Ditambahkan Fase 2 |
-| SSE | `/api/proyektor/stream` | proyektor | semua | event `proyektor` (§8.1) | — | stream | Ujian diambil dari sesi |
-| SSE | `/api/ujian/:id/pantau/stream` | penguji pemilik | menunggu → selesai | `snapshot`, `peserta`, `event_integritas`, `waktu` | — | stream | |
+| SSE | `/api/proyektor/stream` | proyektor | semua | event `proyektor` (§8.1), `sesi_dicabut` | — | stream | Ujian diambil dari sesi. "Cabut proyektor" menutup aliran dengan `sesi_dicabut` |
+| SSE | `/api/ujian/:id/pantau/stream` | penguji pemilik | semua | `pantau` (potret utuh §8.1), `sesi_dicabut` (guru keluar) | — | stream | KEPUTUSAN teknis Fase 5: satu event potret utuh menggantikan `snapshot`/`peserta`/`event_integritas`/`waktu`. Potret dikirim saat koneksi dibuka, setiap ada perubahan (digabung per 300 ms), dan tiap 5 dtk |
+| GET/DELETE | `/api/penguji/masuk/perangkat[/:id]` | penguji | semua | — | — | daftar `{id, info_perangkat, dibuat_at, dipakai_at, kedaluwarsa_at, ini}` / 204 | Fase 5. Di bawah `/penguji/masuk` agar cookie `perangkat_guru` ikut terkirim, sehingga server tahu "browser ini". Melupakan browser ini juga menghapus cookie-nya |
 | POST | `/api/peserta/daftar-nama` | publik | semua kecuali draf | `{kode}` | 6 karakter | `{judul, peserta[{id, nama, nomor, punya_pin}]}` | Daftar untuk dipilih. Kode yang salah atau ujian draf → `kode_salah` |
 | POST | `/api/peserta/masuk` | publik | semua kecuali draf | `{kode, peserta_id, pin, pin_ulang?}` | pin tepat 4 angka; `pin_ulang` wajib & sama bila belum punya PIN | 204 + cookie | Belum punya PIN → PIN dibuat. Sudah punya → dicek. Salah → 401 `pin_salah` + `sisa`. Terkunci → 423 `terkunci`. PIN direset guru saat sedang dicek/dibuat → 409 `pin_berubah`. Antrean penuh → 503 `server_sibuk` (tidak dihitung salah). Sesi lama diambil alih (event `masuk_ulang`) |
 | POST | `/api/peserta/keluar` | peserta | semua | — | — | 204 | Mencabut sesi sendiri |
@@ -289,7 +310,7 @@ Index dan alasannya:
 | POST | `/api/peserta/tab` | peserta | semua (Fase 4: termasuk draf, agar layar "ditutup kembali" tetap bisa membuka SSE) | `{tab_id}` | UUID | 204 | Mengklaim tab aktif; tidak membawa isi ujian |
 | PUT | `/api/peserta/jawaban/:soalId` | peserta | berlangsung, dijeda, selesai (aturan §4); draf/menunggu → 409 `belum_mulai` + event (§5 langkah 1); penilaian/dirilis → 409 `status_tidak_sesuai` | `{isi, ditandai, versi_dasar, id_simpan, konflik?}` + `X-Tab-Id` | isi ≤ 50.000 | `{versi, disimpan_at}` / 202 `{terlambat: true}` | 409 `tab_tidak_aktif` / `versi_bentrok` + `{versi, isi, ditandai}` / `dijeda` |
 | POST | `/api/peserta/kumpulkan` | peserta | berlangsung | `{versi: {soal_id: n}}` + `X-Tab-Id` | | 204 | 409 `belum_tersimpan`; dijeda → 409 `dijeda`; draf/menunggu → 409 `belum_mulai`. Sudah dikumpulkan → 204 (klik ganda bukan galat) |
-| POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; detail ≤ 2.000 karakter | 204 | Selain kondisi itu: 204 dan diabaikan |
+| POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; `detail` hanya `{sinyal?, panjang?}` (strict) | 204 | Selain kondisi itu: 204 dan diabaikan. Aturan penerimaan di §6 |
 | SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua (draf: hanya event `status`) | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut`. Saat draf (ujian ditutup kembali) stream tetap dijawab 200 dengan `status` saja. FAKTA: `EventSource` yang menerima status non-200 berhenti permanen, sehingga ruang tunggu tidak akan lanjut sendiri saat ujian dibuka lagi |
 | GET | `/api/peserta/nilai` | peserta | dirilis | — | — | nilai total, per soal, catatan guru | |
 | *(Fase 6)* | `/api/ujian/:id/penilaian/...` | penguji pemilik | penilaian | | | | Dirancang setelah penyedia AI dipilih |
@@ -306,9 +327,9 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 | Peserta | `GET /api/peserta/ujian` | `id` (ujian), `status`, `waktu{sisa_ms, jam_server, dijeda}`, `judul`, `petunjuk`, `durasi_menit`, `jumlah_soal`, `pdf[{id, nama_tampil}]`, `saya{id, nama, status, cara_kumpul}`. (`id` & `saya.id` hanya untuk kunci penyangga lokal; id peserta memang sudah terlihat di daftar nama.) Hanya saat berlangsung/dijeda: `soal[{id, urutan, judul, teks, bobot, pdf_id, pdf_halaman}]`. Saat berlangsung/dijeda/selesai: `jawaban[{soal_id, isi, versi, ditandai}]` (jawaban **sendiri**, untuk mencocokkan penyangga; di fase selesai tanpa teks soal) |
 | Peserta | SSE `status` | `{status}` saja (sinyal, lalu klien memanggil ulang GET) |
 | Peserta | SSE `waktu` | `{sisa_ms, jam_server, dijeda}` |
-| Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji` |
-| Proyektor | SSE `proyektor` | `judul`, `status`, `kode` (hanya fase menunggu), `waktu{sisa_ms, jam_server, dijeda}` (global), `hadir`, `total`, `terkumpul`, `peserta[{label, status, terjawab, jumlah_soal, aktivitas{jenis: {kali, total_ms}}}]`, `terbaru[{label, jenis, durasi_ms, mulai_at}]` |
-| Guru | `GET /pantau` | Per peserta: `id`, `nama`, `nomor`, `status`, `cara_kumpul`, `tersambung`, `info_perangkat`, `terjawab`, `simpan_terakhir_at`, `sisa_ms`, `punya_pin`, `terkunci`, ringkasan event. **Tanpa hash PIN, tanpa teks soal** |
+| Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji`, `dihapus_penguji` |
+| Proyektor | SSE `proyektor` | `judul`, `status`, `kode` (hanya fase menunggu), `waktu{sisa_ms, jam_server, dijeda}` (global), `hadir`, `total`, `terkumpul`, `peserta[{label, status, terjawab, jumlah_soal, aktivitas{jenis: {kali, total_ms}}}]`, `terbaru[{label, jenis, durasi_ms, mulai_at}]` (maks 8; `durasi_ms` null = masih berlangsung), `jam_server`. Hanya 3 jenis kepergian yang tidak ditandai wajar |
+| Guru | `GET /pantau` & SSE `pantau` | `ujian{id, judul, kode, status, mode_tampil, jumlah_soal, waktu}`. Per peserta: `id`, `nama`, `nomor`, `status`, `cara_kumpul`, `tersambung`, `info_perangkat`, `terjawab`, `simpan_terakhir_at`, `sisa_ms`, `perpanjangan_ms`, `punya_pin`, `terkunci`, `aktivitas` (ringkasan per jenis, tanpa yang wajar), `terlambat_menunggu`. `event[]` (maks 300 terbaru, dengan `detail` dan tanda wajar), `log[]` (maks 100 aksi terbaru), `jam_server`. **Tanpa hash PIN, id anonim, teks soal, atau isi jawaban** |
 
 `label` = nama atau inisial sesuai `mode_tampil`. Setiap koneksi SSE baru langsung menerima `status` + `waktu` terkini (dan `snapshot`/`proyektor`), supaya event yang terlewat saat offline tidak membuat tampilan basi.
 
@@ -336,6 +357,8 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
   - `id` kriteria unik dalam satu soal.
 - **Nilai soal** = Σ(skor ÷ skor_maks_kriteria × bobot_kriteria) ÷ Σ bobot_kriteria → 0–1.
 - **Nilai ujian** = Σ(nilai_soal × bobot_soal) ÷ Σ bobot_soal × 100 → 0–100, dibulatkan 1 desimal.
+- **Bobot bersifat relatif**, baik bobot kriteria di dalam soal maupun bobot soal di dalam ujian. Soal berbobot 20 baru bernilai "20 dari 100" bila jumlah bobot semua soal = 100. Tab "Soal & rubrik" menampilkan total bobot dan persentase tiap soal (§12 no. 8).
+- **Saran menyusun rubrik:** satu kriteria = satu hal yang dinilai. Jangan mencampur dua hal (mis. "berapa poin yang disebut" dan "ketepatan rinciannya") dalam satu tangga level, karena jawaban bisa cocok ke dua level atau tidak ke level mana pun, sehingga AI maupun guru menilai tidak konsisten. Deskriptor level sebaiknya bisa dihitung atau dicek (mis. "5 dari 6 rukun disebut").
 - **Belum diputuskan, ditunda ke Fase 6:**
   - apakah rubrik/acuan boleh diedit di `selesai`/`penilaian` (perlu penilaian ulang);
   - jawaban kosong = 0 tanpa AI;
@@ -367,4 +390,6 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 4. **Cara masuk siswa:** kode ujian → pilih nama → PIN 4 angka yang dibuat siswa sendiri (menggantikan token kertas). MAC address tidak bisa dipakai (FAKTA: browser tidak memberi akses ke identitas perangkat keras).
 3. **Menempel teks dari luar halaman:** diblokir. Upayanya dicatat (panjang teks saja) dan tampil seperti aktivitas lain. Teks yang disalin dari halaman ujian sendiri tetap boleh ditempel.
 6. **Kembali ke draf (tinjauan Fase 3):** siswa di ruang tunggu tidak dikeluarkan. Layarnya menampilkan "Ujian ditutup kembali oleh guru" dan kembali ke ruang tunggu biasa saat guru membuka lagi, tanpa mengetik PIN ulang. Selama draf, siswa hanya menerima sinyal status, tanpa isi ujian apa pun.
+7. **Duplikasi ujian (22 Nov):** ujian dari status apa pun bisa diduplikasi menjadi draf baru (soal, rubrik, acuan, PDF, petunjuk, durasi). Daftar peserta ikut disalin hanya bila guru mencentangnya di dialog (nama + nomor, tanpa PIN).
+8. **Tampilan bobot (22 Nov):** tab "Soal & rubrik" menampilkan total bobot dan persentase tiap soal. Rumus §9 tidak berubah.
 5. **Batas laju (tinjauan Fase 2):** kode ujian & proyektor tanpa blokir per IP (kode benar selalu lolos, kode salah dijeda 1 dtk). Login guru memakai "perangkat dikenal" agar tidak bisa diblokir siswa. Dasbor guru mendapat tombol "Buka kunci semua" (Fase 5).

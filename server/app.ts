@@ -24,7 +24,10 @@ import { proyektorRouter } from './routes/proyektor.ts';
 import { pdfRouter } from './routes/pdf.ts';
 import { pesertaGuruRouter } from './routes/peserta-guru.ts';
 import { soalRouter } from './routes/soal.ts';
+import { eventRouter } from './routes/event.ts';
+import { pantauRouter } from './routes/pantau.ts';
 import { ujianRouter } from './routes/ujian.ts';
+import { ujianDuplikatRouter } from './routes/ujian-duplikat.ts';
 import { ujianAdminRouter } from './routes/ujian-admin.ts';
 import { ujianJalanRouter } from './routes/ujian-jalan.ts';
 import { pesertaUjianRouter } from './routes/peserta-ujian.ts';
@@ -90,7 +93,7 @@ export async function createApp({
     opsi: { ...OPSI_KEAMANAN_BAWAAN, ...opsi },
     originPublik: config.originPublik,
     uploadDir: config.uploadDir,
-    sse: buatHubSse(),
+    sse: buatHubSse(jam),
   };
   const pengecek = buatPengecek(konteks);
   const app = express();
@@ -141,13 +144,16 @@ export async function createApp({
   // kepemilikan ujian (server/routes/milik.ts). Sesi peserta/proyektor tidak bisa lewat.
   app.use('/api/ujian', wajibSesi(db, jam, 'penguji'));
   app.use('/api', ujianRouter(konteks));
+  app.use('/api', ujianDuplikatRouter(konteks));
   app.use('/api', soalRouter(konteks));
   app.use('/api', pdfRouter(konteks));
   app.use('/api', pesertaGuruRouter(konteks));
   app.use('/api', ujianAdminRouter(konteks));
   app.use('/api', ujianJalanRouter(konteks));
+  app.use('/api', pantauRouter(konteks));
   // Rute siswa setelah masuk: wajib sesi peserta (dipasang di dalam pesertaUjianRouter untuk /api/peserta).
   app.use('/api', pesertaUjianRouter(konteks));
+  app.use('/api', eventRouter(konteks));
   app.use('/api', jawabanRouter(konteks));
   // Rute /api yang tidak dikenal dijawab JSON 404, bukan halaman HTML aplikasi.
   app.use('/api', (_req, res) => {

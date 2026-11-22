@@ -1,4 +1,5 @@
-// server/routes/ujian-admin.ts — aksi guru terkait akses: reset PIN, buka kunci, kode & cabut proyektor.
+// server/routes/ujian-admin.ts — aksi guru terkait akses: reset PIN, buka kunci (satu/semua), kode & cabut
+// proyektor.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru sudah dicek di app.ts untuk /api/ujian).
 // Memanggil: server/auth/*, server/acak.ts, server/routes/milik.ts, database.
 // Setiap aksi hanya boleh untuk ujian MILIK guru yang sedang masuk; ujian/peserta milik orang lain
@@ -11,6 +12,7 @@ import { kodeAcak, sidik } from '../acak.ts';
 import { cabutSesiPeserta, cabutSesiProyektor } from '../auth/sesi.ts';
 import { validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 import { catatAksiGuru, ParamPeserta, ParamUjian, pesertaMilikUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
 import type { Response } from 'express';
 
@@ -43,6 +45,7 @@ export function ujianAdminRouter(k: Konteks): Router {
       catatAksi(res, id, 'reset_pin', { peserta_id: pid, sesi_dicabut: dicabut });
     })();
     k.sse.tutupPeserta((kon) => kon.pesertaId === pid, 'sesi_dicabut', { alasan: 'direset_penguji' });
+    beritahuPantau(k, id);
     res.status(204).end();
   });
 
@@ -54,7 +57,24 @@ export function ujianAdminRouter(k: Konteks): Router {
       k.db.prepare('UPDATE peserta SET pin_gagal = 0, terkunci_at = NULL WHERE id = ?').run(pid);
       catatAksi(res, id, 'buka_kunci', { peserta_id: pid });
     })();
+    beritahuPantau(k, id);
     res.status(204).end();
+  });
+
+  // "Buka kunci semua" (keputusan pemilik, Fase 2): bila ada yang sengaja mengunci banyak nama sekaligus.
+  // Dasbor meminta konfirmasi lebih dulu. PIN tetap.
+  router.post('/ujian/:id/peserta/buka-kunci-semua', (req, res) => {
+    const { id } = validasi(ParamUjian, req.params);
+    ujianMilikDiStatus(k, res, id, BUKAN_DRAF);
+    const jumlah = k.db.transaction(() => {
+      const n = k.db
+        .prepare('UPDATE peserta SET pin_gagal = 0, terkunci_at = NULL WHERE ujian_id = ? AND terkunci_at IS NOT NULL')
+        .run(id).changes;
+      catatAksi(res, id, 'buka_kunci_semua', { jumlah: n });
+      return n;
+    })();
+    beritahuPantau(k, id);
+    res.json({ jumlah });
   });
 
   // Kode 8 karakter, berlaku 10 menit, sekali pakai. Yang disimpan hanya sidiknya.
@@ -78,6 +98,7 @@ export function ujianAdminRouter(k: Konteks): Router {
       const dicabut = cabutSesiProyektor(k.db, k.jam(), id);
       catatAksi(res, id, 'cabut_proyektor', { sesi_dicabut: dicabut });
     })();
+    k.sse.tutupPantau((a) => a.jenis === 'proyektor' && a.ujianId === id, 'sesi_dicabut', { alasan: 'dicabut_penguji' });
     res.status(204).end();
   });
 

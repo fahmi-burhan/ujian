@@ -16,6 +16,7 @@ import type { SesiAktif } from '../auth/sesi.ts';
 import { kirimPdf } from '../berkas-pdf.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 import { kirimStatusPeserta, sambutKoneksi } from '../siaran.ts';
 import type { PesertaWaktu, UjianWaktu } from '../waktu-ujian.ts';
 import { bacaPesertaWaktu, bacaUjianWaktu, kumpulkanPeserta, waktuPeserta } from '../waktu-ujian.ts';
@@ -48,6 +49,7 @@ export function tolakSebelumMulai(k: Konteks, kp: KonteksPeserta): never {
     k.db
       .prepare("INSERT INTO event_integritas (ujian_id, peserta_id, jenis, mulai_at) VALUES (?, ?, 'akses_sebelum_mulai', ?)")
       .run(kp.ujian.id, kp.peserta.id, t);
+    beritahuPantau(k, kp.ujian.id);
   }
   throw new GalatHttp(409, 'belum_mulai');
 }
@@ -142,6 +144,9 @@ export function pesertaUjianRouter(k: Konteks): Router {
     // Koneksi baru langsung menerima keadaan terkini, supaya event yang terlewat saat offline tidak
     // membuat tampilan basi (docs/DESAIN.md §8.1).
     sambutKoneksi(k, kon);
+    // Kolom "tersambung" di dasbor guru.
+    beritahuPantau(k, ujian.id);
+    req.on('close', () => beritahuPantau(k, ujian.id));
   });
 
   // Kumpulkan (docs/DESAIN.md §5): hanya bila versi semua jawaban di klien = versi di server, jadi tidak ada

@@ -11,7 +11,8 @@ menerima HTTPS dari luar lalu meneruskannya ke port itu.
 2. **SSL**: Let's Encrypt untuk domain itu, aktifkan **Force HTTPS**.
 3. **Reverse proxy**: target `http://127.0.0.1:8132`, nama bebas (mis. `ujian`). **Matikan cache** reverse
    proxy bila ada pilihannya. Respons aplikasi sudah mengatur cache sendiri, dan cache nginx bisa membuat
-   siswa melihat data basi.
+   siswa melihat data basi. Cara mengecek: `curl -sI https://ujian.domain-anda.id/assets/<berkas>.js` tidak
+   boleh memuat `X-Cache:`, dan setiap respons hanya punya **satu** baris `Cache-Control`.
 4. **Config** situs (berkas konfigurasi nginx). Tambahkan di dalam blok `server { ... }`:
    ```nginx
    # Unggah PDF buku sampai 30 MB (bawaan nginx hanya 1 MB → 413 Request Entity Too Large).

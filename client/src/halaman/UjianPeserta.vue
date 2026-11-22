@@ -9,6 +9,11 @@
   Waktu: sisa_ms dari server, lalu dihitung mundur dengan jam monoton browser (performance.now), sehingga jam
   laptop yang salah atau diubah tidak berpengaruh. Diselaraskan ulang setiap event `waktu` (tiap 30 dtk & saat
   jeda/lanjut/sambung ulang).
+  Integritas (Fase 5, docs/DESAIN.md §6): sinyal halaman (tab tersembunyi, jendela tidak aktif, keluar layar penuh)
+  diteruskan ke client/src/integritas.ts yang melapor ke POST /api/peserta/event. Teks yang keluar dari halaman
+  (copy/cut/seret) dicatat sidiknya (client/src/tempel.ts); menempel ke kotak jawaban teks dari luar halaman
+  diblokir dan upayanya dicatat (panjangnya saja). Selama mengerjakan: layar penuh wajib (penutup editor) dan
+  layar dijaga tetap menyala (Screen Wake Lock).
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -17,8 +22,14 @@ import { GalatSchema, PesertaSayaSchema } from '../../../shared/auth.ts';
 import type { PesertaSaya } from '../../../shared/auth.ts';
 import { SimpanHasilSchema, SseSesiDicabutSchema, UjianPesertaSchema, WaktuSchema } from '../../../shared/peserta.ts';
 import type { AlasanSesiDicabut, UjianPeserta, Waktu } from '../../../shared/peserta.ts';
+import type { JenisKepergian, LaporanEvent } from '../../../shared/pantau.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
 import { buatAutosave } from '../autosave.ts';
+import { buatPencatat } from '../integritas.ts';
+import type { HasilLapor, Pencatat, Sinyal } from '../integritas.ts';
+import { layarPenuh, layarPenuhDidukung, masukLayarPenuh } from '../layar-penuh.ts';
+import { buatHimpunanSalin } from '../tempel.ts';
+import type { HimpunanSalin } from '../tempel.ts';
 import type { Autosave, Bentrok, HasilKirim, Kiriman, Penyimpanan } from '../autosave.ts';
 import DialogBentrok from '../komponen/peserta/DialogBentrok.vue';
 import Pengerjaan from '../komponen/peserta/Pengerjaan.vue';
@@ -49,13 +60,17 @@ const penyimpananGagal = ref(false);
 let tabDiklaim = false;
 
 // ---- Waktu ----
-const acuanWaktu = ref({ sisaMs: 0, dijeda: false, t: performance.now() });
+const acuanWaktu = ref({ sisaMs: 0, dijeda: false, jamServer: 0, t: performance.now() });
 const kini = ref(performance.now());
 const sisaMs = computed(() =>
   acuanWaktu.value.dijeda ? acuanWaktu.value.sisaMs : acuanWaktu.value.sisaMs - (kini.value - acuanWaktu.value.t),
 );
 function setelWaktu(w: Waktu): void {
-  acuanWaktu.value = { sisaMs: w.sisa_ms, dijeda: w.dijeda, t: performance.now() };
+  acuanWaktu.value = { sisaMs: w.sisa_ms, dijeda: w.dijeda, jamServer: w.jam_server, t: performance.now() };
+}
+// Perkiraan jam SERVER sekarang (untuk waktu kejadian laporan aktivitas), tanpa memakai jam laptop.
+function jamServerKini(): number {
+  return acuanWaktu.value.jamServer + (performance.now() - acuanWaktu.value.t);
 }
 
 const mengerjakan = computed(
@@ -204,6 +219,10 @@ function terapkan(data: UjianPeserta): void {
   // Lanjutkan. Aman dipanggil berulang.
   if (as && data.status === 'berlangsung' && data.saya.status === 'mengerjakan' && !tabLain.value) as.lanjutkan();
   if (data.status === 'penilaian' || data.status === 'dirilis') bersihkanLaptop(data);
+  // Himpunan salin murni lokal: disiapkan tanpa menunggu klaim tab, supaya blokir tempel selalu berlaku.
+  if (!himpunan) himpunan = buatHimpunanSalin(`${awalanLokal(data)}salin`, penyimpananLokal);
+  // Halaman yang tadinya di layar "ditutup kembali" (tanpa data ujian) baru bisa menyiapkan pencatat sekarang.
+  if (tabDiklaim && !pencatat) siapkanIntegritas();
 }
 
 async function muat(): Promise<void> {
@@ -247,12 +266,29 @@ async function klaimTab(): Promise<boolean> {
     await api('POST', '/api/peserta/tab', { body: { tab_id: tabId } });
     tabDiklaim = true;
     autosave.value?.aktifkan();
+    siapkanIntegritas();
     return true;
   } catch (e) {
     if (e instanceof GalatApi && e.status === 401) sesiBerakhir('berakhir');
-    else galat.value = pesanGalat(e);
     return false;
   }
+}
+
+// Klaim tab bisa gagal (mis. Wi-Fi putus sesaat setelah halaman dimuat). Tanpa klaim, jawaban tidak terkirim dan
+// aliran SSE tidak dibuka, jadi dicoba ulang (2 → 30 dtk) sambil menampilkan pesan koneksi terputus.
+let jedaKlaim = 2000;
+let pewaktuKlaim: ReturnType<typeof setTimeout> | undefined;
+async function klaimLaluSambung(): Promise<void> {
+  clearTimeout(pewaktuKlaim);
+  if (await klaimTab()) {
+    jedaKlaim = 2000;
+    bukaAliran();
+    return;
+  }
+  if (sesiDicabut.value || tabLain.value) return;
+  koneksiPutus.value = true;
+  pewaktuKlaim = setTimeout(() => void klaimLaluSambung(), jedaKlaim);
+  jedaKlaim = Math.min(jedaKlaim * 2, 30_000);
 }
 
 let aliran: EventSource | null = null;
@@ -295,6 +331,7 @@ function bukaAliran(): void {
     koneksiPutus.value = false;
     // Koneksi pulih: kiriman yang menunggu jeda kirim ulang langsung dicoba.
     autosave.value?.kirimSemuaSekarang();
+    pencatat?.kirimSekarang();
   };
   es.onerror = () => {
     koneksiPutus.value = true;
@@ -332,6 +369,7 @@ function lanjutkanDiTabIni(): void {
 function sesiBerakhir(alasan: AlasanSesiDicabut | 'berakhir'): void {
   tutupAliran();
   autosave.value?.hentikan();
+  pencatat?.hentikan();
   sesiDicabut.value = alasan;
 }
 
@@ -342,6 +380,224 @@ const PESAN_SESI: Record<AlasanSesiDicabut | 'berakhir', string> = {
   dihapus_penguji: 'Namamu atau ujian ini dihapus dari daftar oleh guru. Tanyakan ke guru.',
   berakhir: 'Sesi sudah berakhir. Silakan masuk lagi dengan nama & PIN yang sama.',
 };
+
+// ---- Integritas (docs/DESAIN.md §6) ----
+let pencatat: Pencatat | null = null;
+let himpunan: HimpunanSalin | null = null;
+// Peringatan netral saat siswa kembali (aturan keras #3: tanpa kata "curang").
+const peringatan = ref<{ durasiMs: number; jenis: JenisKepergian } | null>(null);
+const tempelDiblokir = ref(false);
+let pewaktuTempel: ReturnType<typeof setTimeout> | undefined;
+const layarPenuhDitolak = ref(false);
+
+// `tabDiklaim` (let biasa) dipakai autosave; versi ref ini agar computed di bawah ikut berubah.
+const tabDiklaimRef = ref(false);
+// Kepergian hanya dicatat saat ujian berlangsung, siswa mengerjakan, dan tab ini tab aktif.
+const integritasAktif = computed(
+  () =>
+    tabDiklaimRef.value &&
+    !tabLain.value &&
+    !sesiDicabut.value &&
+    ujian.value?.status === 'berlangsung' &&
+    ujian.value.saya.status === 'mengerjakan',
+);
+// Penutup editor: layar penuh wajib selama mengerjakan (bukan saat dijeda/ruang tunggu).
+const perluLayarPenuh = computed(
+  () =>
+    layarPenuhDidukung &&
+    !layarPenuhDitolak.value &&
+    !layarPenuh.value &&
+    mengerjakan.value &&
+    ujian.value?.status === 'berlangsung' &&
+    !tabLain.value &&
+    !sesiDicabut.value,
+);
+
+async function kirimLaporan(laporan: LaporanEvent): Promise<HasilLapor> {
+  const batas = new AbortController();
+  const pewaktu = setTimeout(() => batas.abort(), 15_000);
+  try {
+    const r = await fetch('/api/peserta/event', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'X-Tab-Id': tabId },
+      body: JSON.stringify(laporan),
+      signal: batas.signal,
+    });
+    // 5xx (mis. server dimulai ulang) = sementara, dicoba lagi. 4xx = tidak akan pernah diterima; dibuang.
+    return r.status >= 500 ? 'gagal' : 'ok';
+  } catch {
+    return 'gagal';
+  } finally {
+    clearTimeout(pewaktu);
+  }
+}
+
+function siapkanIntegritas(): void {
+  tabDiklaimRef.value = true;
+  const u = ujian.value;
+  if (!u || pencatat) return;
+  const awalan = awalanLokal(u);
+  pencatat = buatPencatat({
+    awalan,
+    penyimpanan: penyimpananLokal,
+    kirim: kirimLaporan,
+    uuid,
+    jamServer: jamServerKini,
+    monoton: () => performance.now(),
+    aktif: () => integritasAktif.value,
+    saatKembali: (durasiMs, jenis) => {
+      peringatan.value = { durasiMs, jenis };
+    },
+  });
+  himpunan ??= buatHimpunanSalin(`${awalan}salin`, penyimpananLokal);
+  // Keadaan awal halaman (mis. dimuat ulang saat tab tidak aktif atau jendela lain sedang aktif).
+  segarkanPencatat();
+}
+
+function segarkanPencatat(): void {
+  pencatat?.segarkan({ tersembunyi: document.visibilityState === 'hidden', fokus: document.hasFocus() });
+}
+// Pencatatan baru aktif (Mulai, Lanjutkan, dibuka kembali): keadaan halaman dibaca ulang, supaya siswa yang sudah
+// berada di luar halaman saat itu tetap tercatat (sejak saat aktif).
+watch(integritasAktif, (aktif) => {
+  if (aktif) segarkanPencatat();
+});
+// Tab lain mengambil alih: tab ini berhenti mencatat & tidak lagi menulis antrean/kepergian di localStorage
+// (kuncinya dipakai bersama oleh semua tab ujian ini).
+watch(tabLain, (lain) => {
+  if (lain) pencatat?.hentikan();
+});
+// Layar penuh berhasil lagi: penutup kembali berlaku normal.
+watch(layarPenuh, (penuh) => {
+  if (penuh) layarPenuhDitolak.value = false;
+});
+
+function kirimSinyal(s: Sinyal): void {
+  pencatat?.sinyal(s);
+}
+function saatVisibilitas(): void {
+  kirimSinyal(document.visibilityState === 'hidden' ? 'tersembunyi' : 'terlihat');
+  void aturWakeLock(mengerjakan.value);
+}
+function saatBlur(): void {
+  kirimSinyal('blur');
+}
+function saatFokus(): void {
+  kirimSinyal('fokus');
+}
+function saatLayarPenuh(): void {
+  kirimSinyal(document.fullscreenElement ? 'masuk_layar_penuh' : 'keluar_layar_penuh');
+}
+
+function teksTerpilih(target: EventTarget | null): { teks: string; dariEditor: boolean } {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) {
+    return { teks: target.value.substring(target.selectionStart ?? 0, target.selectionEnd ?? 0), dariEditor: true };
+  }
+  return { teks: document.getSelection()?.toString() ?? '', dariEditor: false };
+}
+
+// copy/cut: teks yang keluar dari halaman dicatat sidiknya. Di luar kotak jawaban (soal, buku PDF), halaman
+// sendiri yang menulis clipboard, supaya isinya persis sama dengan yang di-hash (docs/DESAIN.md §6).
+function saatSalin(e: ClipboardEvent): void {
+  const { teks, dariEditor } = teksTerpilih(e.target);
+  if (!teks) return;
+  himpunan?.catat(teks);
+  if (!dariEditor && e.clipboardData) {
+    e.clipboardData.setData('text/plain', teks);
+    e.preventDefault();
+  }
+}
+function saatSeret(e: DragEvent): void {
+  const { teks, dariEditor } = teksTerpilih(e.target);
+  if (!teks) return;
+  himpunan?.catat(teks);
+  if (!dariEditor) e.dataTransfer?.setData('text/plain', teks);
+}
+
+function kotakJawaban(target: EventTarget | null): boolean {
+  return target instanceof HTMLTextAreaElement && target.dataset.jawaban === '1';
+}
+function tolakTempel(e: Event, teks: string): void {
+  if (!himpunan || himpunan.boleh(teks)) return;
+  e.preventDefault();
+  pencatat?.tempel(teks.length);
+  tempelDiblokir.value = true;
+  clearTimeout(pewaktuTempel);
+  pewaktuTempel = setTimeout(() => {
+    tempelDiblokir.value = false;
+  }, 6000);
+}
+function saatTempel(e: ClipboardEvent): void {
+  if (kotakJawaban(e.target)) tolakTempel(e, e.clipboardData?.getData('text/plain') ?? '');
+}
+function saatJatuh(e: DragEvent): void {
+  if (kotakJawaban(e.target)) tolakTempel(e, e.dataTransfer?.getData('text/plain') ?? '');
+}
+
+function pasangPendengarIntegritas(): void {
+  document.addEventListener('visibilitychange', saatVisibilitas);
+  window.addEventListener('blur', saatBlur);
+  window.addEventListener('focus', saatFokus);
+  document.addEventListener('fullscreenchange', saatLayarPenuh);
+  // Fase tangkap (capture): diproses sebelum elemen lain sempat menghentikannya.
+  document.addEventListener('copy', saatSalin, true);
+  document.addEventListener('cut', saatSalin, true);
+  document.addEventListener('dragstart', saatSeret, true);
+  document.addEventListener('paste', saatTempel, true);
+  document.addEventListener('drop', saatJatuh, true);
+}
+function lepasPendengarIntegritas(): void {
+  document.removeEventListener('visibilitychange', saatVisibilitas);
+  window.removeEventListener('blur', saatBlur);
+  window.removeEventListener('focus', saatFokus);
+  document.removeEventListener('fullscreenchange', saatLayarPenuh);
+  document.removeEventListener('copy', saatSalin, true);
+  document.removeEventListener('cut', saatSalin, true);
+  document.removeEventListener('dragstart', saatSeret, true);
+  document.removeEventListener('paste', saatTempel, true);
+  document.removeEventListener('drop', saatJatuh, true);
+  clearTimeout(pewaktuTempel);
+}
+
+async function kembaliLayarPenuh(): Promise<void> {
+  if (await masukLayarPenuh()) return;
+  // Browser menolak (kebijakan perangkat): siswa tetap bisa mengerjakan, tombol "Layar penuh" di atas tetap ada
+  // untuk mencoba lagi, dan kepergian "keluar layar penuh" yang sedang berjalan bisa berakhir.
+  layarPenuhDitolak.value = true;
+  pencatat?.abaikanLayarPenuh();
+}
+
+// Screen Wake Lock: layar tidak mati selama siswa lama membaca soal/buku. Dilepas browser saat tab tersembunyi,
+// jadi diminta lagi setiap halaman terlihat.
+let kunciLayar: WakeLockSentinel | null = null;
+async function aturWakeLock(perlu: boolean): Promise<void> {
+  try {
+    if (perlu && document.visibilityState === 'visible' && !kunciLayar && 'wakeLock' in navigator) {
+      const kunciBaru = await navigator.wakeLock.request('screen');
+      kunciBaru.addEventListener('release', () => {
+        if (kunciLayar === kunciBaru) kunciLayar = null;
+      });
+      kunciLayar = kunciBaru;
+    } else if (!perlu && kunciLayar) {
+      const lama = kunciLayar;
+      kunciLayar = null;
+      await lama.release();
+    }
+  } catch {
+    // Tidak didukung / ditolak (mis. mode hemat daya): tidak mengganggu ujian.
+  }
+}
+watch(mengerjakan, (m) => void aturWakeLock(m));
+
+function formatLama(ms: number): string {
+  const detik = Math.max(1, Math.round(ms / 1000));
+  if (detik < 60) return `${detik} detik`;
+  const menit = Math.floor(detik / 60);
+  const sisa = detik % 60;
+  return sisa === 0 ? `${menit} menit` : `${menit} menit ${sisa} detik`;
+}
 
 // ---- Aksi ----
 async function kumpulkan(): Promise<void> {
@@ -385,6 +641,7 @@ watch(waktuHabis, (habis) => {
 let detik: ReturnType<typeof setInterval> | undefined;
 function saatOnline(): void {
   autosave.value?.kirimSemuaSekarang();
+  pencatat?.kirimSekarang();
 }
 // Peringatan browser bila halaman ditutup saat masih ada jawaban yang belum sampai ke server.
 // (Teksnya tetap aman di laptop ini; peringatan hanya mencegah siswa pindah laptop tanpa sadar.)
@@ -398,16 +655,21 @@ onMounted(async () => {
   }, 250);
   window.addEventListener('online', saatOnline);
   window.addEventListener('beforeunload', saatTutup);
+  pasangPendengarIntegritas();
   await muat();
   if (sesiDicabut.value || tahap.value === 'galat') return;
-  if (await klaimTab()) bukaAliran();
+  await klaimLaluSambung();
 });
 
 onBeforeUnmount(() => {
   clearInterval(detik);
   clearTimeout(pewaktuMuat);
+  clearTimeout(pewaktuKlaim);
   window.removeEventListener('online', saatOnline);
   window.removeEventListener('beforeunload', saatTutup);
+  lepasPendengarIntegritas();
+  pencatat?.hentikan();
+  void aturWakeLock(false);
   tutupAliran();
   autosave.value?.hentikan();
 });
@@ -418,7 +680,7 @@ async function ulangiMuat(): Promise<void> {
   await muat();
   // `muat()` bisa mengubah tahap; TypeScript tidak tahu, jadi dibaca ulang sebagai Tahap.
   const hasil: Tahap = tahap.value as Tahap;
-  if (hasil !== 'galat' && !sesiDicabut.value && (await klaimTab())) bukaAliran();
+  if (hasil !== 'galat' && !sesiDicabut.value) await klaimLaluSambung();
 }
 </script>
 
@@ -523,6 +785,41 @@ async function ulangiMuat(): Promise<void> {
 
     <DialogBentrok v-if="bentrokAktif && !sesiDicabut" :bentrok="bentrokAktif" :judul-soal="judulBentrok" @pilih="pilihBentrok" />
 
+    <!-- Penutup editor: layar penuh wajib selama mengerjakan (docs/DESAIN.md §6). -->
+    <div
+      v-if="perluLayarPenuh && !bentrokAktif"
+      class="fixed inset-0 z-40 bg-base-300/95 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="judul-layar-penuh"
+    >
+      <div class="card bg-base-100 shadow-xl max-w-md">
+        <div class="card-body gap-3 items-center text-center">
+          <i class="fa-solid fa-expand text-4xl text-primary" aria-hidden="true"></i>
+          <h2 id="judul-layar-penuh" class="card-title">Layar penuh wajib selama ujian</h2>
+          <p>Tekan tombol di bawah untuk kembali ke layar penuh dan melanjutkan mengerjakan.</p>
+          <button class="btn btn-primary btn-lg" type="button" @click="kembaliLayarPenuh">
+            <i class="fa-solid fa-expand" aria-hidden="true"></i> Masuk layar penuh
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <dialog v-if="peringatan && !sesiDicabut && !perluLayarPenuh" class="modal modal-open" open aria-labelledby="judul-peringatan">
+      <div class="modal-box">
+        <h3 id="judul-peringatan" class="font-bold text-lg">
+          <i class="fa-solid fa-circle-info text-warning" aria-hidden="true"></i> Kamu meninggalkan halaman ujian
+        </h3>
+        <p class="py-3">
+          Kamu meninggalkan halaman ujian selama {{ formatLama(peringatan.durasiMs) }}. Aktivitas ini tercatat dan
+          terlihat oleh pengawas.
+        </p>
+        <div class="modal-action">
+          <button class="btn btn-primary" type="button" @click="peringatan = null">Lanjut mengerjakan</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog v-if="tabLain && !sesiDicabut" class="modal modal-open" open aria-labelledby="judul-tab-lain">
       <div class="modal-box">
         <h3 id="judul-tab-lain" class="font-bold text-lg">
@@ -550,6 +847,11 @@ async function ulangiMuat(): Promise<void> {
     </dialog>
 
     <div class="toast toast-bottom toast-start z-50">
+      <div v-if="tempelDiblokir" role="alert" class="alert alert-warning">
+        <i class="fa-solid fa-paste" aria-hidden="true"></i>
+        <span>Menempel teks dari luar halaman ujian tidak diizinkan. Upaya ini tercatat. Teks yang disalin dari
+          halaman ujian ini (soal, buku, jawabanmu sendiri) tetap boleh ditempel.</span>
+      </div>
       <div v-if="koneksiPutus && !sesiDicabut && !tabLain && tahap === 'siap'" role="status" class="alert alert-warning">
         <i class="fa-solid fa-wifi" aria-hidden="true"></i>
         <span>Koneksi ke server terputus. Tetap mengetik saja — jawaban disimpan di laptop & dikirim otomatis.</span>

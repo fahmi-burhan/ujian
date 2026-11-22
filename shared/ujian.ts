@@ -111,6 +111,19 @@ export const PesertaUbahSchema = z
   .strict()
   .refine((isi) => Object.keys(isi).length > 0);
 
+// Duplikasi ujian (permintaan pemilik 22 Nov): salinan selalu berstatus draf dengan kode baru. Soal, rubrik,
+// jawaban acuan, petunjuk, durasi, mode tampil, dan PDF selalu ikut; daftar peserta (nama + nomor saja,
+// tanpa PIN/status/jawaban) hanya bila dicentang guru.
+export const DuplikasiSchema = z.object({ salin_peserta: z.boolean() }).strict();
+export type Duplikasi = z.infer<typeof DuplikasiSchema>;
+
+const AKHIRAN_SALINAN = ' (salinan)';
+export function judulSalinan(judul: string): string {
+  // Dipotong per karakter (code point), bukan per unit UTF-16, agar emoji tidak terbelah. Batas di DB memakai
+  // length() SQLite yang juga menghitung karakter.
+  return Array.from(judul).slice(0, BATAS.judul - AKHIRAN_SALINAN.length).join('') + AKHIRAN_SALINAN;
+}
+
 export const ImporPesertaSchema = z.object({ csv: z.string().min(1).max(BATAS.csvKarakter) }).strict();
 
 // ---- Respons (khusus guru pemilik) ----

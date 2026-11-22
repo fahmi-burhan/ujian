@@ -92,7 +92,7 @@ export class Klien {
   headerCookie(path: string): string | null {
     const cocok = [...this.cookie].filter(([nama]) => {
       if (nama === 'sesi_proyektor') return path.startsWith('/api/proyektor');
-      if (nama === 'perangkat_guru') return path === '/api/penguji/masuk';
+      if (nama === 'perangkat_guru') return path === '/api/penguji/masuk' || path.startsWith('/api/penguji/masuk/');
       return true;
     });
     return cocok.length > 0 ? cocok.map(([n, v]) => `${n}=${v}`).join('; ') : null;

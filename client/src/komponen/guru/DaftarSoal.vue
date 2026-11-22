@@ -19,6 +19,14 @@ const disunting = ref<SoalGuru | 'baru' | null>(null);
 const galat = ref('');
 const draf = computed(() => props.ujian.status === 'draf');
 
+// Bobot soal bersifat RELATIF (docs/DESAIN.md §9): nilai ujian = Σ(nilai soal × bobot) ÷ Σ bobot × 100.
+// Persentase ditampilkan agar guru tahu porsi sebenarnya tiap soal (mis. bobot 20 dari total 100 = 20%).
+const totalBobot = computed(() => props.ujian.soal.reduce((n, s) => n + s.bobot, 0));
+function persen(bobot: number): string {
+  if (totalBobot.value === 0) return '0';
+  return (Math.round((bobot / totalBobot.value) * 1000) / 10).toLocaleString('id-ID');
+}
+
 function lengkap(s: SoalGuru): boolean {
   return s.teks.trim() !== '' && s.jawaban_acuan.trim() !== '' && masalahRubrik(s.rubrik).length === 0;
 }
@@ -83,7 +91,7 @@ function selesaiSunting(): void {
           <div class="flex-1 min-w-48">
             <p class="font-medium break-words">{{ s.judul }}</p>
             <p class="text-xs text-base-content/60">
-              Bobot {{ s.bobot }} · {{ s.rubrik.kriteria.length }} kriteria
+              Bobot {{ s.bobot }} · {{ persen(s.bobot) }}% dari nilai · {{ s.rubrik.kriteria.length }} kriteria
               <template v-if="s.pdf_id"> · {{ namaPdf(s.pdf_id) }}<template v-if="s.pdf_halaman"> hal. {{ s.pdf_halaman }}</template></template>
             </p>
           </div>
@@ -105,6 +113,11 @@ function selesaiSunting(): void {
           </div>
         </li>
       </ol>
+      <p v-if="ujian.soal.length > 0" class="text-sm">
+        <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i>
+        Total bobot <strong>{{ totalBobot }}</strong>.
+        <span class="text-base-content/70">Bobot bersifat relatif: porsi tiap soal = bobotnya ÷ total bobot.</span>
+      </p>
 
       <button v-if="draf && ujian.soal.length < BATAS.jumlahSoal" type="button" class="btn btn-primary self-start" @click="disunting = 'baru'">
         <i class="fa-solid fa-plus" aria-hidden="true"></i> Tambah soal

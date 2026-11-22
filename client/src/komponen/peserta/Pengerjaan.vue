@@ -184,6 +184,7 @@ watch(soal, (daftar) => {
             :value="isiAktif"
             :readonly="editorTerkunci"
             :maxlength="BATAS_ISI_JAWABAN"
+            data-jawaban="1"
             placeholder="Tulis jawabanmu di sini…"
             spellcheck="false"
             autocomplete="off"

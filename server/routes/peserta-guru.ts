@@ -4,13 +4,14 @@
 // Fase (docs/DESAIN.md §8): tambah & impor boleh sampai ujian berlangsung/dijeda (siswa yang terlupa
 // bisa ditambahkan), sedangkan ubah & hapus hanya saat draf (setelah dibuka, siswa mungkin sudah masuk
 // dengan nama itu). Reset PIN & buka kunci ada di server/routes/ujian-admin.ts.
-import { randomBytes } from 'node:crypto';
 import { Router } from 'express';
 import { pesertaDariCsv } from '../../shared/csv.ts';
 import { BATAS, ImporPesertaSchema, PesertaInputSchema, PesertaUbahSchema } from '../../shared/ujian.ts';
 import type { ImporHasil, PesertaGuru } from '../../shared/ujian.ts';
+import { idAnonim } from '../acak.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 import { catatAksiGuru, ParamPeserta, ParamUjian, pesertaMilikUjian, sentuhUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
 
 const BOLEH_TAMBAH = ['draf', 'menunggu', 'berlangsung', 'dijeda'] as const;
@@ -31,11 +32,6 @@ function keGuru(b: BarisPesertaGuru): PesertaGuru {
     terkunci: b.terkunci === 1,
     masuk_pertama_at: b.masuk_pertama_at,
   };
-}
-
-// Pengganti nama saat jawaban dikirim ke AI (Fase 6). Acak, tidak bisa ditebak dari nama/urutan.
-function idAnonim(): string {
-  return `anon_${randomBytes(9).toString('base64url')}`;
 }
 
 export function pesertaGuruRouter(k: Konteks): Router {
@@ -75,6 +71,7 @@ export function pesertaGuruRouter(k: Konteks): Router {
       sentuhUjian(k, id);
       return keGuru(b);
     })();
+    beritahuPantau(k, id);
     res.status(201).json(baru);
   });
 
@@ -103,6 +100,7 @@ export function pesertaGuruRouter(k: Konteks): Router {
       catatAksiGuru(k, res, id, 'impor_peserta', { ditambah: hasil.ditambah.length, dilewati: hasil.dilewati.length });
       sentuhUjian(k, id);
     })();
+    beritahuPantau(k, id);
     res.json(hasil);
   });
 

@@ -1,6 +1,7 @@
 <!--
   client/src/halaman/PenyusunanUjian.vue — penyusunan satu ujian (alamat "/guru/ujian/:id"): tab Info, Soal &
-  rubrik, Buku PDF, Peserta, Pratinjau; daftar periksa kelengkapan; tombol Buka ujian / Kembali ke draf / Hapus,
+  rubrik, Buku PDF, Peserta, Pratinjau; daftar periksa kelengkapan; tombol Buka ujian / Kembali ke draf / Hapus /
+  Duplikasi,
   dan selama ujian: Mulai / Jeda / Lanjutkan / Akhiri beserta sisa waktu global.
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
   Memanggil: GET/DELETE /api/ujian/:id, POST /api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri};
@@ -10,13 +11,14 @@
 -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { masalahUjian, UjianDetailSchema } from '../../../shared/ujian.ts';
 import type { UjianDetail } from '../../../shared/ujian.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
 import BukuPdf from '../komponen/guru/BukuPdf.vue';
 import DaftarPeserta from '../komponen/guru/DaftarPeserta.vue';
 import DaftarSoal from '../komponen/guru/DaftarSoal.vue';
+import DialogDuplikasi from '../komponen/guru/DialogDuplikasi.vue';
 import InfoUjian from '../komponen/guru/InfoUjian.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import PratinjauUjian from '../komponen/guru/PratinjauUjian.vue';
@@ -41,6 +43,7 @@ const tab = ref<Tab>('info');
 const galat = ref('');
 const masalahServer = ref<string[]>([]);
 const sibuk = ref(false);
+const dialogDuplikasi = ref(false);
 
 const draf = computed(() => ujian.value?.status === 'draf');
 const masalah = computed(() => (ujian.value ? masalahUjian(ujian.value) : []));
@@ -60,7 +63,7 @@ watch(ujian, (u) => {
   acuanWaktu.value = u?.waktu ? { sisaMs: u.waktu.sisa_ms, dijeda: u.waktu.dijeda, t: performance.now() } : null;
 });
 // Selama ujian berjalan, data dimuat ulang tiap 15 dtk supaya jeda otomatis oleh server (server sempat mati)
-// terlihat. Dasbor pemantauan real-time menyusul di Fase 5.
+// terlihat. Pemantauan real-time per siswa ada di dasbor pemantauan (/guru/ujian/:id/pantau).
 const detik = setInterval(() => {
   kini.value = performance.now();
 }, 500);
@@ -208,6 +211,12 @@ watch(
             </div>
 
             <div class="flex flex-wrap gap-2 justify-end">
+              <RouterLink v-if="!draf" :to="`/guru/ujian/${ujian.id}/pantau`" class="btn btn-primary btn-outline">
+                <i class="fa-solid fa-chart-column" aria-hidden="true"></i> Dasbor pemantauan
+              </RouterLink>
+              <button class="btn btn-ghost" type="button" @click="dialogDuplikasi = true">
+                <i class="fa-solid fa-copy" aria-hidden="true"></i> Duplikasi
+              </button>
               <button v-if="draf" class="btn btn-ghost text-error" type="button" @click="hapus">
                 <i class="fa-solid fa-trash" aria-hidden="true"></i> Hapus ujian
               </button>
@@ -256,6 +265,7 @@ watch(
         <BukuPdf v-else-if="tab === 'pdf'" :ujian="ujian" @muat-ulang="muat" />
         <DaftarPeserta v-else-if="tab === 'peserta'" :ujian="ujian" @muat-ulang="muat" />
         <PratinjauUjian v-else :ujian="ujian" />
+        <DialogDuplikasi v-if="dialogDuplikasi" :ujian="ujian" @tutup="dialogDuplikasi = false" />
       </template>
     </main>
   </div>

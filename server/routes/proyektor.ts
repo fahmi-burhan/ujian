@@ -1,7 +1,8 @@
 // server/routes/proyektor.ts — masuk layar proyektor dengan kode sekali pakai, dan profil sesinya.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api).
 // Memanggil: server/auth/*, shared/auth.ts, database.
-// Endpoint: POST /proyektor/masuk, GET /proyektor/saya. Aliran data proyektor (SSE) dibuat di Fase 5.
+// Endpoint: POST /proyektor/masuk, GET /proyektor/saya, SSE /proyektor/stream (Fase 5, event `proyektor`
+// berisi potret dari server/pantau.ts; daftar putih docs/DESAIN.md §8.1).
 // Sesi proyektor TIDAK membawa identitas guru (CHECK di skema), jadi layar kelas tidak pernah
 // memegang akses ke soal, rubrik, atau data peserta (docs/DESAIN.md §1, K1).
 import { Router } from 'express';
@@ -13,6 +14,7 @@ import { sesiDari, wajibSesi } from '../auth/penjaga.ts';
 import { buatSesi, pasangCookieSesi } from '../auth/sesi.ts';
 import { GalatHttp, tunda, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { muatProyektor } from '../pantau.ts';
 
 export function proyektorRouter(k: Konteks): Router {
   const router = Router();
@@ -54,6 +56,17 @@ export function proyektorRouter(k: Konteks): Router {
     if (!ujian) throw new GalatHttp(401, 'belum_masuk');
     const body: ProyektorSaya = { ujian: { judul: ujian.judul, status: ujian.status } };
     res.json(body);
+  });
+
+  // Ujian diambil dari sesi proyektor (tidak pernah dari alamat), jadi layar ini hanya bisa melihat satu ujian.
+  router.get('/proyektor/stream', wajibProyektor, (req, res) => {
+    const sesi = sesiDari(res);
+    if (sesi.ujianId === null) throw new GalatHttp(401, 'belum_masuk');
+    const data = muatProyektor(k, sesi.ujianId);
+    if (!data) throw new GalatHttp(401, 'belum_masuk');
+    k.sse.bukaAliran(req, res);
+    k.sse.daftarPantau(req, { res, jenis: 'proyektor', ujianId: sesi.ujianId, sesiHash: sesi.idHash });
+    k.sse.kirim(res, 'proyektor', data);
   });
 
   return router;

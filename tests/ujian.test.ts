@@ -372,3 +372,87 @@ describe('PDF buku', () => {
     assert.equal(existsSync(join(a.uploadDir, 'tidak-ada.pdf')), false);
   });
 });
+
+describe('duplikasi ujian', () => {
+  async function unggahPdf(id: number, nama = 'Buku Fikih.pdf') {
+    const r = await guru.minta('POST', `/api/ujian/${id}/pdf`, {
+      mentah: { isi: PDF_PALSU, tipe: 'application/pdf' },
+      headers: { 'x-nama-berkas': encodeURIComponent(nama) },
+    });
+    return PdfInfoSchema.parse(r.body);
+  }
+
+  test('ujian yang sudah dibuka disalin menjadi draf baru: soal, rubrik, acuan, PDF (berkas sendiri); peserta tidak', async () => {
+    const u = await ujianBaru('Latihan Fikih');
+    await guru.minta('PATCH', `/api/ujian/${u.id}`, { body: { petunjuk: 'Kerjakan dengan jujur.', durasi_menit: 45 } });
+    await guru.minta('PATCH', `/api/ujian/${u.id}/tampilan`, { body: { mode_tampil: 'inisial' } });
+    const pdf = await unggahPdf(u.id);
+    await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, judul: 'Wudhu', pdf_id: pdf.id, pdf_halaman: 7 } });
+    await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, judul: 'Shalat', bobot: 5 } });
+    await guru.minta('POST', `/api/ujian/${u.id}/peserta`, { body: { nama: 'Budi' } });
+    assert.equal((await guru.minta('POST', `/api/ujian/${u.id}/buka`)).status, 200);
+
+    const r = await guru.minta('POST', `/api/ujian/${u.id}/duplikat`, { body: { salin_peserta: false } });
+    assert.equal(r.status, 201);
+    const s = UjianDetailSchema.parse(r.body);
+    assert.notEqual(s.id, u.id);
+    assert.notEqual(s.kode, u.kode);
+    assert.match(s.kode, POLA_KODE_UJIAN);
+    assert.deepEqual(
+      [s.judul, s.petunjuk, s.durasi_menit, s.mode_tampil, s.status, s.dibuka_at, s.jumlah_peserta],
+      ['Latihan Fikih (salinan)', 'Kerjakan dengan jujur.', 45, 'inisial', 'draf', null, 0],
+    );
+    assert.deepEqual(s.soal.map((x) => [x.urutan, x.judul, x.bobot]), [[1, 'Wudhu', 2], [2, 'Shalat', 5]]);
+    assert.deepEqual(s.soal[0]?.rubrik, RUBRIK);
+    assert.equal(s.soal[0]?.jawaban_acuan, SOAL.jawaban_acuan);
+    // PDF salinan punya id & berkas sendiri, dan rujukan soal menunjuk ke PDF salinan.
+    assert.equal(s.pdf.length, 1);
+    assert.notEqual(s.pdf[0]?.id, pdf.id);
+    assert.deepEqual([s.pdf[0]?.nama_tampil, s.soal[0]?.pdf_id, s.soal[0]?.pdf_halaman], ['Buku Fikih.pdf', s.pdf[0]?.id, 7]);
+    assert.equal(readdirSync(a.uploadDir).length, 2);
+    const isi = await guru.minta('GET', `/api/ujian/${s.id}/pdf/${s.pdf[0]?.id}`, { headers: { range: 'bytes=0-4' } });
+    assert.deepEqual([isi.status, isi.body], [206, '%PDF-']);
+
+    // Ujian asal tidak berubah; salinan bisa diedit dan dihapus tanpa mengganggu berkas asal.
+    const asal = UjianDetailSchema.parse((await guru.minta('GET', `/api/ujian/${u.id}`)).body);
+    assert.deepEqual([asal.status, asal.judul, asal.soal.length, asal.jumlah_peserta], ['menunggu', 'Latihan Fikih', 2, 1]);
+    assert.equal((await guru.minta('PATCH', `/api/ujian/${s.id}/soal/${s.soal[1]?.id}`, { body: { ...SOAL, judul: 'Shalat (revisi)' } })).status, 200);
+    assert.equal((await guru.minta('DELETE', `/api/ujian/${s.id}`)).status, 204);
+    assert.equal(readdirSync(a.uploadDir).length, 1);
+    assert.equal((await guru.minta('GET', `/api/ujian/${u.id}/pdf/${pdf.id}`)).status, 200);
+
+    const log = a.db.prepare("SELECT aksi, detail_json FROM log_aksi WHERE ujian_id = ? AND aksi = 'duplikat_dari'").all(s.id);
+    assert.equal(log.length, 0, 'log ikut terhapus bersama salinannya');
+  });
+
+  test('salin peserta: hanya nama + nomor, tanpa PIN/status; id anonim baru', async () => {
+    // Ujian 1 dari data awal (3 peserta); satu peserta dibuat seolah sudah punya PIN & sedang mengerjakan.
+    a.db.prepare("UPDATE peserta SET pin_hash = 'scrypt$x', pin_dibuat_at = ?, status = 'mengerjakan', masuk_pertama_at = ? WHERE id = 1").run(Date.now(), Date.now());
+    const r = await guru.minta('POST', '/api/ujian/1/duplikat', { body: { salin_peserta: true } });
+    assert.equal(r.status, 201);
+    const s = UjianDetailSchema.parse(r.body);
+    assert.equal(s.jumlah_peserta, 3);
+    const baris = a.db
+      .prepare('SELECT nama, nomor, pin_hash, status, masuk_pertama_at, id_anonim FROM peserta WHERE ujian_id = ? ORDER BY nomor')
+      .all(s.id) as { nama: string; nomor: string; pin_hash: string | null; status: string; masuk_pertama_at: number | null; id_anonim: string }[];
+    assert.deepEqual(baris.map((b) => [b.nama, b.nomor, b.pin_hash, b.status, b.masuk_pertama_at]), [
+      ['Budi', '01', null, 'belum_masuk', null],
+      ['Ani', '02', null, 'belum_masuk', null],
+      ['Cici', '03', null, 'belum_masuk', null],
+    ]);
+    const anonLama = a.db.prepare('SELECT id_anonim FROM peserta WHERE ujian_id = 1').pluck().all() as string[];
+    assert.ok(baris.every((b) => /^anon_/.test(b.id_anonim) && !anonLama.includes(b.id_anonim)));
+    const log = a.db.prepare("SELECT detail_json FROM log_aksi WHERE ujian_id = ? AND aksi = 'duplikat_dari'").pluck().get(s.id) as string;
+    assert.deepEqual(JSON.parse(log), { ujian_id: 1, jumlah_soal: 0, jumlah_pdf: 0, jumlah_peserta: 3 });
+  });
+
+  test('judul panjang dipotong agar tetap ≤ 200 karakter; body wajib; ujian guru lain → 404', async () => {
+    const u = await ujianBaru('x'.repeat(200));
+    const s = UjianDetailSchema.parse((await guru.minta('POST', `/api/ujian/${u.id}/duplikat`, { body: { salin_peserta: false } })).body);
+    assert.equal(s.judul.length, 200);
+    assert.ok(s.judul.endsWith(' (salinan)'));
+    assert.equal((await guru.minta('POST', `/api/ujian/${u.id}/duplikat`, { body: {} })).status, 400);
+    assert.equal((await guru.minta('POST', '/api/ujian/2/duplikat', { body: { salin_peserta: true } })).status, 404);
+    assert.equal(a.db.prepare('SELECT COUNT(*) FROM ujian WHERE penguji_id = 1').pluck().get(), 3);
+  });
+});

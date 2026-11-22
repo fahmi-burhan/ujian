@@ -1,5 +1,6 @@
 // server/routes/ujian.ts — ujian milik guru: daftar, buat, detail, ubah, tampilan, hapus, serta transisi
-// "Buka ujian" (draf → menunggu) dan "Kembali ke draf" (menunggu → draf).
+// "Buka ujian" (draf → menunggu) dan "Kembali ke draf" (menunggu → draf). Duplikasi ada di
+// server/routes/ujian-duplikat.ts.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru dicek di app.ts untuk /api/ujian).
 // Memanggil: shared/ujian.ts (skema & cek kelengkapan), server/routes/milik.ts, server/berkas-pdf.ts, database.
 // Kontrak: docs/DESAIN.md §3 (transisi) dan §8 (endpoint). Mulai/jeda/lanjutkan/akhiri ada di
@@ -22,6 +23,7 @@ import { sesiDari } from '../auth/penjaga.ts';
 import { hapusBerkas } from '../berkas-pdf.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 import { siarkanStatus } from '../siaran.ts';
 import { bacaUjianWaktu, waktuPeserta } from '../waktu-ujian.ts';
 import { catatAksiGuru, ParamUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
@@ -77,6 +79,34 @@ export function muatUjianDetail(k: Konteks, ujianId: number): UjianDetail {
   };
 }
 
+export type DataUjianBaru = {
+  // Dari sesi guru (wajibSesi 'penguji' menjamin terisi; null hanya bila ada salah pasang rute).
+  pengujiId: number | null;
+  judul: string;
+  petunjuk: string;
+  durasiMenit: number;
+  modeTampil: string;
+};
+
+// Menyisipkan ujian draf dengan kode acak & unik. Bentrok kode sangat jarang (887 juta kemungkinan), jadi
+// dicoba ulang beberapa kali. Dipakai "Ujian baru" dan "Duplikasi ujian" (server/routes/ujian-duplikat.ts).
+export function sisipUjian(k: Konteks, data: DataUjianBaru): number {
+  if (data.pengujiId === null) throw new Error('sisipUjian dipanggil tanpa sesi guru');
+  const sekarang = k.jam();
+  const sisip = k.db.prepare(
+    `INSERT INTO ujian (penguji_id, judul, petunjuk, kode, durasi_menit, mode_tampil, dibuat_at, diubah_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (kode) DO NOTHING RETURNING id`,
+  );
+  for (let coba = 0; coba < 10; coba++) {
+    const id = sisip
+      .pluck()
+      .get(data.pengujiId, data.judul, data.petunjuk, kodeAcak(PANJANG_KODE_UJIAN), data.durasiMenit, data.modeTampil,
+        sekarang, sekarang) as number | undefined;
+    if (id !== undefined) return id;
+  }
+  throw new Error('Gagal membuat kode ujian unik setelah 10 kali mencoba');
+}
+
 export function ujianRouter(k: Konteks): Router {
   const router = Router();
 
@@ -94,21 +124,13 @@ export function ujianRouter(k: Konteks): Router {
 
   router.post('/ujian', (req, res) => {
     const input = validasi(UjianBaruSchema, req.body);
-    const sekarang = k.jam();
-    const sisip = k.db.prepare(
-      `INSERT INTO ujian (penguji_id, judul, kode, durasi_menit, dibuat_at, diubah_at)
-       VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (kode) DO NOTHING RETURNING id`,
-    );
-    // Kode ujian acak & unik. Bentrok sangat jarang (887 juta kemungkinan); dicoba ulang beberapa kali.
-    let id: number | undefined;
-    for (let coba = 0; coba < 10 && id === undefined; coba++) {
-      id = sisip
-        .pluck()
-        .get(sesiDari(res).pengujiId, input.judul, kodeAcak(PANJANG_KODE_UJIAN), input.durasi_menit, sekarang, sekarang) as
-        | number
-        | undefined;
-    }
-    if (id === undefined) throw new Error('Gagal membuat kode ujian unik setelah 10 kali mencoba');
+    const id = sisipUjian(k, {
+      pengujiId: sesiDari(res).pengujiId,
+      judul: input.judul,
+      petunjuk: '',
+      durasiMenit: input.durasi_menit,
+      modeTampil: 'nama',
+    });
     res.status(201).json(muatUjianDetail(k, id));
   });
 
@@ -144,6 +166,7 @@ export function ujianRouter(k: Konteks): Router {
       k.db.prepare('UPDATE ujian SET mode_tampil = ?, diubah_at = ? WHERE id = ?').run(mode_tampil, k.jam(), id);
       catatAksiGuru(k, res, id, 'ubah_tampilan', { mode_tampil });
     })();
+    beritahuPantau(k, id);
     res.json(muatUjianDetail(k, id));
   });
 

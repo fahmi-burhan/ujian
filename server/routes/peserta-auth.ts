@@ -18,6 +18,7 @@ import { sesiDari, wajibSesi } from '../auth/penjaga.ts';
 import { buatSesi, cabutSesi, cabutSesiPeserta, hapusCookieSesi, pasangCookieSesi } from '../auth/sesi.ts';
 import { GalatHttp, tunda, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
+import { beritahuPantau } from '../pantau.ts';
 
 export const BATAS_PIN_SALAH = 5;
 
@@ -96,6 +97,7 @@ export function pesertaAuthRouter(k: Konteks): Router {
           "INSERT INTO log_aksi (ujian_id, aktor, aksi, detail_json, dibuat_at) VALUES (?, 'server', 'pin_terkunci', ?, ?)",
         )
         .run(peserta.ujian_id, JSON.stringify({ peserta_id: peserta.id, perangkat }), k.jam());
+      beritahuPantau(k, peserta.ujian_id);
       throw new GalatHttp(423, 'terkunci');
     }
     throw new GalatHttp(401, 'pin_salah', { sisa: BATAS_PIN_SALAH - slot });
@@ -183,6 +185,7 @@ export function pesertaAuthRouter(k: Konteks): Router {
     // Aliran SSE yang masih terbuka milik sesi lama (mis. laptop lain) ditutup dengan `sesi_dicabut`.
     // Sesi baru belum punya aliran, jadi semua aliran peserta ini memang milik sesi lama.
     k.sse.tutupPeserta((kon) => kon.pesertaId === pesertaId, 'sesi_dicabut', { alasan: 'diambil_alih' });
+    beritahuPantau(k, ujian.id);
     pasangCookieSesi(req, res, 'peserta', token, k.originPublik);
     res.status(204).end();
   });
