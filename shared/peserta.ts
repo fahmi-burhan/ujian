@@ -33,8 +33,8 @@ export const SoalPesertaSchema = z
     judul: z.string(),
     teks: z.string(),
     bobot: z.number().int(),
-    pdf_id: z.number().int().nullable(),
-    pdf_halaman: z.number().int().nullable(),
+    // Buku rujukan soal (bisa lebih dari satu), baru dikirim setelah ujian dimulai.
+    rujukan: z.array(z.object({ pdf_id: z.number().int(), halaman: z.number().int().nullable() }).strict()),
   })
   .strict();
 export type SoalPeserta = z.infer<typeof SoalPesertaSchema>;

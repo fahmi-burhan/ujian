@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import type { Response } from 'express';
 import { BATAS, SoalInputSchema, UrutanSoalSchema } from '../../shared/ujian.ts';
-import type { SoalGuru } from '../../shared/ujian.ts';
+import type { Rujukan, SoalGuru } from '../../shared/ujian.ts';
 import { GalatHttp, validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
 import { ParamSoal, ParamUjian, sentuhUjian, ujianMilikDiStatus } from './milik.ts';
@@ -15,11 +15,19 @@ import { muatSoalGuru } from './ujian.ts';
 export function soalRouter(k: Konteks): Router {
   const router = Router();
 
-  // PDF rujukan wajib milik ujian yang sama (FK komposit di skema juga menjaganya).
-  function cekPdf(ujianId: number, pdfId: number | null): void {
-    if (pdfId === null) return;
-    const ada = k.db.prepare('SELECT 1 FROM pdf WHERE id = ? AND ujian_id = ?').get(pdfId, ujianId);
-    if (!ada) throw new GalatHttp(404, 'tidak_ditemukan');
+  // Setiap PDF rujukan wajib milik ujian yang sama (FK komposit di skema juga menjaganya).
+  function cekPdf(ujianId: number, rujukan: Rujukan[]): void {
+    const ada = k.db.prepare('SELECT 1 FROM pdf WHERE id = ? AND ujian_id = ?');
+    for (const r of rujukan) {
+      if (!ada.get(r.pdf_id, ujianId)) throw new GalatHttp(404, 'tidak_ditemukan');
+    }
+  }
+
+  // Editor selalu mengirim daftar rujukan utuh: yang lama diganti seluruhnya, urutan mengikuti kiriman.
+  function simpanRujukan(ujianId: number, soalId: number, rujukan: Rujukan[]): void {
+    k.db.prepare('DELETE FROM soal_rujukan WHERE soal_id = ? AND ujian_id = ?').run(soalId, ujianId);
+    const sisip = k.db.prepare('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id, halaman) VALUES (?, ?, ?, ?, ?)');
+    rujukan.forEach((r, i) => sisip.run(soalId, ujianId, i + 1, r.pdf_id, r.halaman));
   }
 
   function soalSatu(ujianId: number, soalId: number): SoalGuru {
@@ -47,16 +55,15 @@ export function soalRouter(k: Konteks): Router {
     const { id } = validasi(ParamUjian, req.params);
     draf(res, id);
     const soal = validasi(SoalInputSchema, req.body);
-    cekPdf(id, soal.pdf_id);
+    cekPdf(id, soal.rujukan);
     const sekarang = k.jam();
     const soalId = k.db.transaction(() => {
       const jumlah = k.db.prepare('SELECT COUNT(*) FROM soal WHERE ujian_id = ?').pluck().get(id) as number;
       if (jumlah >= BATAS.jumlahSoal) throw new GalatHttp(409, 'batas_tercapai');
       const baru = k.db
         .prepare(
-          `INSERT INTO soal (ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman,
-             dibuat_at, diubah_at)
-           VALUES (?, (SELECT COALESCE(MAX(urutan), 0) + 1 FROM soal WHERE ujian_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO soal (ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, dibuat_at, diubah_at)
+           VALUES (?, (SELECT COALESCE(MAX(urutan), 0) + 1 FROM soal WHERE ujian_id = ?), ?, ?, ?, ?, ?, ?, ?)
            RETURNING id`,
         )
         .pluck()
@@ -68,11 +75,10 @@ export function soalRouter(k: Konteks): Router {
           soal.bobot,
           JSON.stringify(soal.rubrik),
           soal.jawaban_acuan,
-          soal.pdf_id,
-          soal.pdf_halaman,
           sekarang,
           sekarang,
         ) as number;
+      simpanRujukan(id, baru, soal.rujukan);
       sentuhUjian(k, id);
       return baru;
     })();
@@ -85,12 +91,11 @@ export function soalRouter(k: Konteks): Router {
     draf(res, id);
     soalSatu(id, soalId);
     const soal = validasi(SoalInputSchema, req.body);
-    cekPdf(id, soal.pdf_id);
+    cekPdf(id, soal.rujukan);
     k.db.transaction(() => {
       k.db
         .prepare(
-          `UPDATE soal SET judul = ?, teks = ?, bobot = ?, rubrik_json = ?, jawaban_acuan = ?, pdf_id = ?,
-             pdf_halaman = ?, diubah_at = ?
+          `UPDATE soal SET judul = ?, teks = ?, bobot = ?, rubrik_json = ?, jawaban_acuan = ?, diubah_at = ?
            WHERE id = ? AND ujian_id = ?`,
         )
         .run(
@@ -99,12 +104,11 @@ export function soalRouter(k: Konteks): Router {
           soal.bobot,
           JSON.stringify(soal.rubrik),
           soal.jawaban_acuan,
-          soal.pdf_id,
-          soal.pdf_halaman,
           k.jam(),
           soalId,
           id,
         );
+      simpanRujukan(id, soalId, soal.rujukan);
       sentuhUjian(k, id);
     })();
     res.json(soalSatu(id, soalId));

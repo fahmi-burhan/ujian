@@ -286,6 +286,29 @@ describe('balapan dengan guru', () => {
   });
 });
 
+describe('ujian terhapus saat permintaan AI masih di penyedia', () => {
+  test('biaya permintaan itu tetap tercatat (ujian_id/run_id NULL), bukan hilang karena galat FK', async () => {
+    let lepas: () => void = () => {};
+    const tahan = new Promise<void>((r) => {
+      lepas = r;
+    });
+    const ai = tiruan(async (p, ke) => {
+      await tahan;
+      return jawabSah(p, ke);
+    });
+    await siapkan(ai, { AI_PARALEL: '1' });
+    await mulaiAi();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(ai.permintaan.length, 1);
+    // Meniru penghapusan yang lolos (mis. lewat jalur lain): langsung di DB, selagi permintaan berjalan.
+    a.db.prepare('DELETE FROM ujian WHERE id = 1').run();
+    lepas();
+    await a.ai.diam();
+    assert.deepEqual(a.db.prepare('SELECT ujian_id, run_id FROM ai_pemakaian').all(), [{ ujian_id: null, run_id: null }]);
+    assert.ok(a.ai.terpakaiBulanIniMikro() > 0);
+  });
+});
+
 describe('pengaman biaya & galat penyedia', () => {
   test('batas biaya bulanan: run berhenti sebelum permintaan yang bisa melewati batas', async () => {
     const ai = tiruan(jawabSah);

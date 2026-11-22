@@ -59,21 +59,20 @@ const LABEL_KEADAAN: Record<KeadaanSoal, { teks: string; kelas: string; ikon: st
   tersimpan: { teks: 'Tersimpan', kelas: 'text-success', ikon: 'fa-circle-check' },
   menunggu: { teks: 'Menyimpan…', kelas: 'text-base-content/60', ikon: 'fa-pen' },
   mengirim: { teks: 'Menyimpan…', kelas: 'text-base-content/60', ikon: 'fa-arrows-rotate' },
-  gagal: { teks: 'Belum tersimpan di server — disimpan di laptop, dicoba lagi otomatis', kelas: 'text-warning', ikon: 'fa-wifi' },
+  gagal: { teks: 'Belum tersimpan di server. Disimpan di laptop, dicoba lagi otomatis', kelas: 'text-warning', ikon: 'fa-wifi' },
   dijeda: { teks: 'Disimpan di laptop; dikirim setelah ujian dilanjutkan', kelas: 'text-warning', ikon: 'fa-pause' },
   terlambat: { teks: 'Terkirim setelah waktu habis; guru yang memutuskan', kelas: 'text-warning', ikon: 'fa-clock' },
   bentrok: { teks: 'Pilih teks yang dipakai', kelas: 'text-error', ikon: 'fa-code-compare' },
-  ditolak: { teks: 'Belum terkirim — disimpan di laptop', kelas: 'text-warning', ikon: 'fa-triangle-exclamation' },
+  ditolak: { teks: 'Belum terkirim, disimpan di laptop', kelas: 'text-warning', ikon: 'fa-triangle-exclamation' },
 };
 
 function namaPdf(id: number | null): string {
   return props.ujian.pdf.find((p) => p.id === id)?.nama_tampil ?? 'Buku';
 }
 
-function bukaRujukan(s: SoalPeserta): void {
-  if (s.pdf_id === null) return;
+function bukaRujukan(r: SoalPeserta['rujukan'][number]): void {
   panelBuku.value = true;
-  permintaanPdf.value = { pdfId: s.pdf_id, halaman: s.pdf_halaman, n: (permintaanPdf.value?.n ?? 0) + 1 };
+  permintaanPdf.value = { pdfId: r.pdf_id, halaman: r.halaman, n: (permintaanPdf.value?.n ?? 0) + 1 };
 }
 
 function ketik(e: Event): void {
@@ -168,10 +167,12 @@ watch(soal, (daftar) => {
               <span class="text-sm font-normal text-base-content/60">(bobot {{ aktif.bobot }})</span>
             </h2>
             <p class="whitespace-pre-wrap break-words">{{ aktif.teks }}</p>
-            <button v-if="aktif.pdf_id !== null" type="button" class="link link-primary text-sm self-start" @click="bukaRujukan(aktif)">
-              <i class="fa-solid fa-book-open" aria-hidden="true"></i>
-              Lihat {{ namaPdf(aktif.pdf_id) }}<template v-if="aktif.pdf_halaman">, halaman {{ aktif.pdf_halaman }}</template>
-            </button>
+            <div v-if="aktif.rujukan.length" class="flex flex-wrap gap-x-4 gap-y-1">
+              <button v-for="(r, j) in aktif.rujukan" :key="j" type="button" class="link link-primary text-sm" @click="bukaRujukan(r)">
+                <i class="fa-solid fa-book-open" aria-hidden="true"></i>
+                Lihat {{ namaPdf(r.pdf_id) }}<template v-if="r.halaman">, halaman {{ r.halaman }}</template>
+              </button>
+            </div>
           </div>
         </article>
 

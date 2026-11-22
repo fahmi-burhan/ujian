@@ -5,7 +5,7 @@
 // - Unggah: body mentah `application/pdf` maks 30 MB, nama asli di header X-Nama-Berkas (URL-encoded).
 //   Isi wajib diawali "%PDF-". Di disk disimpan dengan nama acak buatan server.
 // - Sajikan: mendukung HTTP Range (PDF.js memuat bertahap). Endpoint PDF untuk siswa ada di peserta-ujian.ts.
-// - Hapus: rujukan soal ke PDF itu dikosongkan dulu.
+// - Hapus: rujukan soal ke PDF itu ikut terhapus (soal_rujukan ON DELETE CASCADE), soalnya tetap ada.
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import express, { Router } from 'express';
@@ -112,7 +112,7 @@ export function pdfRouter(k: Konteks): Router {
         .pluck()
         .get(pdfId, id) as string | undefined;
       if (!nama) throw new GalatHttp(404, 'tidak_ditemukan');
-      k.db.prepare('UPDATE soal SET pdf_id = NULL, pdf_halaman = NULL WHERE pdf_id = ? AND ujian_id = ?').run(pdfId, id);
+      // Rujukan soal ke PDF ini ikut terhapus (soal_rujukan ON DELETE CASCADE); soalnya tetap ada.
       k.db.prepare('DELETE FROM pdf WHERE id = ? AND ujian_id = ?').run(pdfId, id);
       catatAksiGuru(k, res, id, 'hapus_pdf', { pdf_id: pdfId });
       sentuhUjian(k, id);

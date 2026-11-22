@@ -43,9 +43,10 @@ beforeEach(() => {
       id, id, `acak-${id}.pdf`, 'a'.repeat(64), T,
     );
     run(
-      "INSERT INTO soal (id, ujian_id, urutan, judul, teks, pdf_id, dibuat_at, diubah_at) VALUES (?, ?, 1, 'Studi kasus', 'Teks', ?, ?, ?)",
-      id, id, id, T, T,
+      "INSERT INTO soal (id, ujian_id, urutan, judul, teks, dibuat_at, diubah_at) VALUES (?, ?, 1, 'Studi kasus', 'Teks', ?, ?)",
+      id, id, T, T,
     );
+    run('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id, halaman) VALUES (?, ?, 1, ?, 3)', id, id, id);
     run("INSERT INTO peserta (id, ujian_id, nama, id_anonim, dibuat_at) VALUES (?, ?, 'Budi', ?, ?)", id, id, `anon-${id}`, T);
   }
 });
@@ -59,7 +60,7 @@ describe('struktur', () => {
       .all() as { name: string; strict: number }[];
     assert.deepEqual(tables.map((t) => t.name).sort(), [
       'ai_pemakaian', 'ai_run', 'ai_tugas', 'event_integritas', 'jawaban', 'jawaban_terlambat', 'jawaban_versi', 'log_aksi', 'pdf',
-      'penguji', 'penilaian', 'perangkat_guru', 'peserta', 'sesi', 'soal', 'tautan_proyektor', 'ujian',
+      'penguji', 'penilaian', 'perangkat_guru', 'peserta', 'sesi', 'soal', 'soal_rujukan', 'tautan_proyektor', 'ujian',
     ]);
     for (const t of tables) assert.equal(t.strict, 1, `${t.name} harus STRICT`);
   });
@@ -221,7 +222,8 @@ describe('isolasi antar-ujian (FK komposit)', () => {
   });
 
   test('soal tidak bisa menunjuk PDF dari ujian lain', () => {
-    assert.throws(() => run('UPDATE soal SET pdf_id = 2 WHERE id = 1'), DITOLAK);
+    assert.throws(() => run('UPDATE soal_rujukan SET pdf_id = 2 WHERE soal_id = 1'), DITOLAK);
+    assert.throws(() => run('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id) VALUES (1, 1, 2, 2)'), DITOLAK);
   });
 
   test('event tidak bisa memakai ujian_id yang bukan ujian peserta', () => {
@@ -237,10 +239,16 @@ describe('isolasi antar-ujian (FK komposit)', () => {
     run(insert, 1, 'simpan-0001', T);
   });
 
-  test('PDF yang masih dirujuk soal tidak bisa dihapus; setelah rujukan dikosongkan bisa', () => {
-    assert.throws(() => run('DELETE FROM pdf WHERE id = 1'), DITOLAK);
-    run('UPDATE soal SET pdf_id = NULL, pdf_halaman = NULL WHERE pdf_id = 1');
+  test('menghapus PDF ikut menghapus rujukannya, soalnya tetap ada', () => {
     run('DELETE FROM pdf WHERE id = 1');
+    assert.equal(db.prepare('SELECT COUNT(*) FROM soal_rujukan WHERE soal_id = 1').pluck().get(), 0);
+    assert.equal(db.prepare('SELECT COUNT(*) FROM soal WHERE id = 1').pluck().get(), 1);
+  });
+
+  test('rujukan per soal maksimal 5 dan halaman ≥ 1', () => {
+    for (const urutan of [2, 3, 4, 5]) run('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id) VALUES (1, 1, ?, 1)', urutan);
+    assert.throws(() => run('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id) VALUES (1, 1, 6, 1)'), /CHECK/);
+    assert.throws(() => run('UPDATE soal_rujukan SET halaman = 0 WHERE soal_id = 1 AND urutan = 2'), /CHECK/);
   });
 });
 

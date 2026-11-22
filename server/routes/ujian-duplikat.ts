@@ -20,7 +20,7 @@ import { hapusBerkas, namaBerkasBaru, pathBerkas } from '../berkas-pdf.ts';
 import { validasi } from '../http.ts';
 import type { Konteks } from '../konteks.ts';
 import { catatAksiGuru, ParamUjian, ujianMilik } from './milik.ts';
-import { muatUjianDetail, sisipUjian } from './ujian.ts';
+import { muatRujukan, muatUjianDetail, sisipUjian } from './ujian.ts';
 
 type BarisUjianAsal = { judul: string; petunjuk: string; durasi_menit: number; mode_tampil: string };
 type BarisPdfAsal = { id: number; nama_tampil: string; nama_berkas: string; ukuran_byte: number; sha256: string };
@@ -32,8 +32,6 @@ type BarisSoalAsal = {
   bobot: number;
   rubrik_json: string;
   jawaban_acuan: string;
-  pdf_id: number | null;
-  pdf_halaman: number | null;
 };
 
 export function ujianDuplikatRouter(k: Konteks): Router {
@@ -95,26 +93,29 @@ export function ujianDuplikatRouter(k: Konteks): Router {
 
         const soal = k.db
           .prepare(
-            `SELECT id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman
+            `SELECT id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan
              FROM soal WHERE ujian_id = ? ORDER BY urutan, id`,
           )
           .all(id) as BarisSoalAsal[];
+        const rujukanAsal = muatRujukan(k, id);
         const sisipSoal = k.db.prepare(
-          `INSERT INTO soal (ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman,
-             dibuat_at, diubah_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO soal (ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, dibuat_at, diubah_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        );
+        const sisipRujukan = k.db.prepare(
+          'INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id, halaman) VALUES (?, ?, ?, ?, ?)',
         );
         soal.forEach((s, i) => {
-          let pdfId: number | null = null;
-          if (s.pdf_id !== null) {
-            const dipetakan = idPdfBaru.get(s.pdf_id);
-            // Hanya terjadi bila PDF diunggah ke ujian asal tepat selama penyalinan berkas berlangsung.
-            if (dipetakan === undefined) throw new Error('PDF ujian asal berubah selama duplikasi; coba lagi');
-            pdfId = dipetakan;
-          }
           // Urutan dinomori ulang 1..n agar rapi walau ujian asal punya celah urutan.
-          sisipSoal.run(baru, i + 1, s.judul, s.teks, s.bobot, s.rubrik_json, s.jawaban_acuan, pdfId,
-            pdfId === null ? null : s.pdf_halaman, sekarang, sekarang);
+          const soalBaru = sisipSoal
+            .pluck()
+            .get(baru, i + 1, s.judul, s.teks, s.bobot, s.rubrik_json, s.jawaban_acuan, sekarang, sekarang) as number;
+          (rujukanAsal.get(s.id) ?? []).forEach((r, j) => {
+            const pdfBaru = idPdfBaru.get(r.pdf_id);
+            // Hanya terjadi bila PDF diunggah ke ujian asal tepat selama penyalinan berkas berlangsung.
+            if (pdfBaru === undefined) throw new Error('PDF ujian asal berubah selama duplikasi; coba lagi');
+            sisipRujukan.run(soalBaru, baru, j + 1, pdfBaru, r.halaman);
+          });
         });
 
         let jumlahPeserta = 0;

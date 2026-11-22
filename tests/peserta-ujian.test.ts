@@ -36,12 +36,13 @@ function siapkanIsiUjian(): void {
   pdf.run(1, 1, 'Buku Ekonomi.pdf', NAMA_PDF_1, ISI_PDF.length, '0'.repeat(64), T0);
   pdf.run(2, 2, 'Buku Lain.pdf', NAMA_PDF_2, ISI_PDF.length, '0'.repeat(64), T0);
   const soal = a.db.prepare(
-    `INSERT INTO soal (id, ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman, dibuat_at, diubah_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, 'RAHASIA-ACUAN', ?, ?, ?, ?)`,
+    `INSERT INTO soal (id, ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, dibuat_at, diubah_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, 'RAHASIA-ACUAN', ?, ?)`,
   );
-  soal.run(11, 1, 1, 'Inflasi', 'TEKS-SOAL-1 Jelaskan inflasi.', RUBRIK, 1, 12, T0, T0);
-  soal.run(12, 1, 2, 'Deflasi', 'TEKS-SOAL-2 Jelaskan deflasi.', RUBRIK, null, null, T0, T0);
-  soal.run(21, 2, 1, 'Soal guru lain', 'Teks lain', RUBRIK, null, null, T0, T0);
+  soal.run(11, 1, 1, 'Inflasi', 'TEKS-SOAL-1 Jelaskan inflasi.', RUBRIK, T0, T0);
+  soal.run(12, 1, 2, 'Deflasi', 'TEKS-SOAL-2 Jelaskan deflasi.', RUBRIK, T0, T0);
+  soal.run(21, 2, 1, 'Soal guru lain', 'Teks lain', RUBRIK, T0, T0);
+  a.db.prepare('INSERT INTO soal_rujukan (soal_id, ujian_id, urutan, pdf_id, halaman) VALUES (11, 1, 1, 1, 12)').run();
 }
 
 async function masukGuru(): Promise<Klien> {
@@ -119,7 +120,7 @@ describe('ruang tunggu & Mulai', () => {
     assert.deepEqual(u.waktu, { sisa_ms: DURASI_MS, jam_server: T0, dijeda: false });
     assert.deepEqual(u.saya, { id: 1, nama: 'Budi', status: 'menunggu', cara_kumpul: null });
     const teks = JSON.stringify(u);
-    assert.doesNotMatch(teks, /TEKS-SOAL|RAHASIA|Inflasi|pdf_halaman/);
+    assert.doesNotMatch(teks, /TEKS-SOAL|RAHASIA|Inflasi|rujukan|halaman/);
   });
 
   test('Mulai: siswa di ruang tunggu mengerjakan; soal terkirim tanpa rubrik/acuan; yang belum masuk tetap belum masuk', async () => {
@@ -130,10 +131,10 @@ describe('ruang tunggu & Mulai', () => {
     const u = await ambilUjian(s);
     assert.equal(u.status, 'berlangsung');
     assert.deepEqual(
-      u.soal?.map((x) => [x.id, x.pdf_id, x.pdf_halaman]),
+      u.soal?.map((x) => [x.id, x.rujukan]),
       [
-        [11, 1, 12],
-        [12, null, null],
+        [11, [{ pdf_id: 1, halaman: 12 }]],
+        [12, []],
       ],
     );
     assert.deepEqual(u.jawaban, []);

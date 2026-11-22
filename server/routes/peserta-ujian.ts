@@ -20,6 +20,7 @@ import { beritahuPantau } from '../pantau.ts';
 import { kirimStatusPeserta, sambutKoneksi } from '../siaran.ts';
 import type { PesertaWaktu, UjianWaktu } from '../waktu-ujian.ts';
 import { bacaPesertaWaktu, bacaUjianWaktu, kumpulkanPeserta, waktuPeserta } from '../waktu-ujian.ts';
+import { muatRujukan } from './ujian.ts';
 
 export type KonteksPeserta = { sesi: SesiAktif; peserta: PesertaWaktu; ujian: UjianWaktu };
 
@@ -91,9 +92,12 @@ export function pesertaUjianRouter(k: Konteks): Router {
     };
     if (SOAL_TERLIHAT.includes(ujian.status)) {
       // Kolom dipilih satu per satu: rubrik_json & jawaban_acuan tidak pernah ikut terbaca.
-      body.soal = k.db
-        .prepare('SELECT id, urutan, judul, teks, bobot, pdf_id, pdf_halaman FROM soal WHERE ujian_id = ? ORDER BY urutan, id')
-        .all(ujian.id) as SoalPeserta[];
+      const rujukan = muatRujukan(k, ujian.id);
+      body.soal = (
+        k.db
+          .prepare('SELECT id, urutan, judul, teks, bobot FROM soal WHERE ujian_id = ? ORDER BY urutan, id')
+          .all(ujian.id) as Omit<SoalPeserta, 'rujukan'>[]
+      ).map((s) => ({ ...s, rujukan: rujukan.get(s.id) ?? [] }));
     }
     if (JAWABAN_TERLIHAT.includes(ujian.status)) {
       const baris = k.db

@@ -239,8 +239,10 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
     const biaya = biayaMikro(model, hasilPanggil.pemakaian);
     const p = hasilPanggil.pemakaian;
     db.prepare(
+      // Subquery: bila ujian/run sudah terhapus selama permintaan berjalan, kolomnya NULL (bukan galat FK), jadi
+      // biaya yang sudah ditagih penyedia tetap terhitung untuk batas bulanan.
       `INSERT INTO ai_pemakaian (ujian_id, run_id, model, token_masuk, token_tulis_cache, token_baca_cache, token_keluar, biaya_mikro_usd, dibuat_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ((SELECT id FROM ujian WHERE id = ?), (SELECT id FROM ai_run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?)`,
     ).run(t.ujian_id, t.run_id, model, p.masuk, p.tulisCache, p.bacaCache, p.keluar, biaya, jam());
 
     if (hasilPanggil.berhenti !== 'selesai' || hasilPanggil.teks === null) {

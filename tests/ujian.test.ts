@@ -143,7 +143,10 @@ describe('soal & rubrik', () => {
       { ...SOAL, rubrik: { ...RUBRIK, rahasia: 1 } },
       { ...SOAL, rubrik: { kriteria: Array.from({ length: 11 }, (_, i) => ({ ...RUBRIK.kriteria[0], id: `k${i}` })), poin_wajib: [] } },
       { ...SOAL, rubrik: { kriteria: [{ ...RUBRIK.kriteria[0], level: [{ skor: 11, deskriptor: 'x' }] }], poin_wajib: [] } },
-      { ...SOAL, pdf_halaman: 3 },
+      { ...SOAL, rujukan: [{ pdf_id: 1 }] },
+      { ...SOAL, rujukan: Array.from({ length: 6 }, (_, i) => ({ pdf_id: 1, halaman: i + 1 })) },
+      { ...SOAL, rujukan: [{ pdf_id: 1, halaman: 3 }, { pdf_id: 1, halaman: 3 }] },
+      { ...SOAL, rujukan: [{ pdf_id: 1, halaman: 0 }] },
       { ...SOAL, judul: '' },
     ];
     for (const body of salah) assert.equal((await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body })).status, 400);
@@ -162,7 +165,7 @@ describe('soal & rubrik', () => {
     a.db
       .prepare("INSERT INTO pdf (id, ujian_id, nama_tampil, nama_berkas, ukuran_byte, sha256, diunggah_at) VALUES (77, 2, 'x', 'y', 1, ?, 0)")
       .run('a'.repeat(64));
-    const r = await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, pdf_id: 77, pdf_halaman: 3 } });
+    const r = await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, rujukan: [{ pdf_id: 77, halaman: 3 }] } });
     assert.equal(r.status, 404);
   });
 });
@@ -354,16 +357,23 @@ describe('PDF buku', () => {
     assert.equal(readdirSync(a.uploadDir).length, 0);
   });
 
-  test('hapus PDF mengosongkan rujukan soal & berkasnya; hapus ujian menghapus semua berkasnya', async () => {
+  test('satu soal merujuk beberapa buku; hapus PDF menghapus rujukannya & berkasnya; hapus ujian menghapus semua berkasnya', async () => {
     const u = await ujianBaru();
     const pdf = PdfInfoSchema.parse((await unggah(u.id)).body);
-    await unggah(u.id, PDF_PALSU, 'Buku Kedua.pdf');
-    const soal = SoalGuruSchema.parse((await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, pdf_id: pdf.id, pdf_halaman: 12 } })).body);
-    assert.deepEqual([soal.pdf_id, soal.pdf_halaman], [pdf.id, 12]);
+    const pdf2 = PdfInfoSchema.parse((await unggah(u.id, PDF_PALSU, 'Buku Kedua.pdf')).body);
+    const rujukan = [
+      { pdf_id: pdf.id, halaman: 12 },
+      { pdf_id: pdf2.id, halaman: null },
+    ];
+    const soal = SoalGuruSchema.parse((await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, rujukan } })).body);
+    assert.deepEqual(soal.rujukan, rujukan);
+    // Ubah: urutan rujukan mengikuti kiriman terakhir.
+    const diubah = await guru.minta('PATCH', `/api/ujian/${u.id}/soal/${soal.id}`, { body: { ...SOAL, rujukan: [...rujukan].reverse() } });
+    assert.deepEqual(SoalGuruSchema.parse(diubah.body).rujukan, [...rujukan].reverse());
 
     assert.equal((await guru.minta('DELETE', `/api/ujian/${u.id}/pdf/${pdf.id}`)).status, 204);
     const detail = UjianDetailSchema.parse((await guru.minta('GET', `/api/ujian/${u.id}`)).body);
-    assert.deepEqual([detail.soal[0]?.pdf_id, detail.soal[0]?.pdf_halaman, detail.pdf.length], [null, null, 1]);
+    assert.deepEqual([detail.soal[0]?.rujukan, detail.pdf.length], [[{ pdf_id: pdf2.id, halaman: null }], 1]);
     assert.equal(readdirSync(a.uploadDir).length, 1);
 
     assert.equal((await guru.minta('DELETE', `/api/ujian/${u.id}`)).status, 204);
@@ -387,7 +397,7 @@ describe('duplikasi ujian', () => {
     await guru.minta('PATCH', `/api/ujian/${u.id}`, { body: { petunjuk: 'Kerjakan dengan jujur.', durasi_menit: 45 } });
     await guru.minta('PATCH', `/api/ujian/${u.id}/tampilan`, { body: { mode_tampil: 'inisial' } });
     const pdf = await unggahPdf(u.id);
-    await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, judul: 'Wudhu', pdf_id: pdf.id, pdf_halaman: 7 } });
+    await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, judul: 'Wudhu', rujukan: [{ pdf_id: pdf.id, halaman: 7 }] } });
     await guru.minta('POST', `/api/ujian/${u.id}/soal`, { body: { ...SOAL, judul: 'Shalat', bobot: 5 } });
     await guru.minta('POST', `/api/ujian/${u.id}/peserta`, { body: { nama: 'Budi' } });
     assert.equal((await guru.minta('POST', `/api/ujian/${u.id}/buka`)).status, 200);
@@ -408,7 +418,7 @@ describe('duplikasi ujian', () => {
     // PDF salinan punya id & berkas sendiri, dan rujukan soal menunjuk ke PDF salinan.
     assert.equal(s.pdf.length, 1);
     assert.notEqual(s.pdf[0]?.id, pdf.id);
-    assert.deepEqual([s.pdf[0]?.nama_tampil, s.soal[0]?.pdf_id, s.soal[0]?.pdf_halaman], ['Buku Fikih.pdf', s.pdf[0]?.id, 7]);
+    assert.deepEqual([s.pdf[0]?.nama_tampil, s.soal[0]?.rujukan], ['Buku Fikih.pdf', [{ pdf_id: s.pdf[0]?.id, halaman: 7 }]]);
     assert.equal(readdirSync(a.uploadDir).length, 2);
     const isi = await guru.minta('GET', `/api/ujian/${s.id}/pdf/${s.pdf[0]?.id}`, { headers: { range: 'bytes=0-4' } });
     assert.deepEqual([isi.status, isi.body], [206, '%PDF-']);

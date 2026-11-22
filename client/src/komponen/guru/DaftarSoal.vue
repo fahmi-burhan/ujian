@@ -94,7 +94,7 @@ function selesaiSunting(): void {
             <p class="font-medium break-words">{{ s.judul }}</p>
             <p class="text-xs text-base-content/60">
               Bobot {{ s.bobot }} · {{ persen(s.bobot) }}% dari nilai · {{ s.rubrik.kriteria.length }} kriteria
-              <template v-if="s.pdf_id"> · {{ namaPdf(s.pdf_id) }}<template v-if="s.pdf_halaman"> hal. {{ s.pdf_halaman }}</template></template>
+              <template v-for="(r, j) in s.rujukan" :key="j"> · {{ namaPdf(r.pdf_id) }}<template v-if="r.halaman"> hal. {{ r.halaman }}</template></template>
             </p>
           </div>
           <span v-if="lengkap(s)" class="badge badge-success badge-sm gap-1"><i class="fa-solid fa-check" aria-hidden="true"></i> Lengkap</span>

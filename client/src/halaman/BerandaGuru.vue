@@ -1,16 +1,17 @@
 <!--
   client/src/halaman/BerandaGuru.vue — beranda guru (alamat "/guru"): daftar ujian milik guru dan
-  form membuat ujian baru, dan tombol Duplikasi per ujian.
+  form membuat ujian baru, serta tombol Duplikasi & Hapus (permanen) per ujian.
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
-  Memanggil: GET /api/ujian, POST /api/ujian; komponen KepalaGuru, DialogDuplikasi, PerangkatDikenal.
+  Memanggil: GET /api/ujian, POST /api/ujian; komponen KepalaGuru, DialogDuplikasi, DialogHapusUjian, PerangkatDikenal.
 -->
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { DaftarUjianSchema, UjianDetailSchema } from '../../../shared/ujian.ts';
+import { DaftarUjianSchema, STATUS_BOLEH_HAPUS, UjianDetailSchema } from '../../../shared/ujian.ts';
 import type { UjianRingkas } from '../../../shared/ujian.ts';
 import { api, pesanGalat } from '../api.ts';
 import DialogDuplikasi from '../komponen/guru/DialogDuplikasi.vue';
+import DialogHapusUjian from '../komponen/guru/DialogHapusUjian.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import PerangkatDikenal from '../komponen/guru/PerangkatDikenal.vue';
 import { LABEL_STATUS_UJIAN, WARNA_STATUS_UJIAN, waktuWib } from '../label.ts';
@@ -22,14 +23,26 @@ const judul = ref('');
 const durasi = ref(90);
 const membuat = ref(false);
 const diduplikasi = ref<UjianRingkas | null>(null);
+const dihapus = ref<UjianRingkas | null>(null);
+const info = ref('');
 
-onMounted(async () => {
+// Ujian yang sedang dibuka/berjalan tidak bisa dihapus (siswa sedang tersambung); server juga menolaknya.
+const bolehHapus = (u: UjianRingkas): boolean => STATUS_BOLEH_HAPUS.includes(u.status);
+
+async function muat(): Promise<void> {
   try {
     daftar.value = await api('GET', '/api/ujian', { skema: DaftarUjianSchema });
   } catch (e) {
     galat.value = pesanGalat(e);
   }
-});
+}
+onMounted(muat);
+
+async function setelahHapus(): Promise<void> {
+  info.value = `Ujian "${dihapus.value?.judul ?? ''}" sudah dihapus permanen.`;
+  dihapus.value = null;
+  await muat();
+}
 
 async function buat(): Promise<void> {
   galat.value = '';
@@ -56,6 +69,7 @@ async function buat(): Promise<void> {
         <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
         <span>{{ galat }}</span>
       </div>
+      <div v-if="info" role="status" class="alert alert-success"><span>{{ info }}</span></div>
 
       <form class="card bg-base-100 shadow" @submit.prevent="buat">
         <div class="card-body">
@@ -100,9 +114,21 @@ async function buat(): Promise<void> {
                   <td>{{ u.jumlah_peserta }}</td>
                   <td class="text-sm text-base-content/70">{{ waktuWib(u.diubah_at) }}</td>
                   <td>
-                    <button type="button" class="btn btn-xs btn-ghost" :aria-label="`Duplikasi ${u.judul}`" title="Duplikasi" @click.stop="diduplikasi = u">
-                      <i class="fa-solid fa-copy" aria-hidden="true"></i>
-                    </button>
+                    <div class="flex gap-1 justify-end">
+                      <button type="button" class="btn btn-xs btn-ghost" :aria-label="`Duplikasi ${u.judul}`" title="Duplikasi" @click.stop="diduplikasi = u">
+                        <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        type="button"
+                        class="btn btn-xs btn-ghost text-error"
+                        :aria-label="`Hapus ${u.judul}`"
+                        :title="bolehHapus(u) ? 'Hapus permanen' : 'Tidak bisa dihapus saat ujian dibuka atau berjalan'"
+                        :disabled="!bolehHapus(u)"
+                        @click.stop="dihapus = u"
+                      >
+                        <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -113,5 +139,6 @@ async function buat(): Promise<void> {
       <PerangkatDikenal />
     </main>
     <DialogDuplikasi v-if="diduplikasi" :ujian="diduplikasi" @tutup="diduplikasi = null" />
+    <DialogHapusUjian v-if="dihapus" :ujian="dihapus" @tutup="dihapus = null" @terhapus="setelahHapus" />
   </div>
 </template>

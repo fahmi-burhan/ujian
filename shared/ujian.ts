@@ -6,6 +6,7 @@
 // berisi rubrik & jawaban acuan, jadi tidak boleh dipakai untuk respons peserta/proyektor (§8.1).
 import { z } from 'zod';
 import { STATUS_PESERTA, STATUS_UJIAN } from './auth.ts';
+import type { StatusUjian } from './auth.ts';
 import { WaktuSchema } from './peserta.ts';
 
 export const BATAS = {
@@ -27,6 +28,8 @@ export const BATAS = {
   csvKarakter: 100_000,
   pdfByte: 30 * 1024 * 1024,
   namaPdf: 200,
+  // Buku rujukan per soal (migrasi 0005).
+  rujukanSoal: 5,
 } as const;
 
 // Teks bebas: spasi di awal/akhir dibuang supaya isian "  " dianggap kosong saat cek kelengkapan.
@@ -61,6 +64,10 @@ export type Kriteria = z.infer<typeof KriteriaSchema>;
 
 export const RUBRIK_KOSONG: Rubrik = { kriteria: [], poin_wajib: [] };
 
+// Status ujian yang boleh dihapus permanen: tidak ada siswa yang sedang tersambung ke ujiannya (keputusan pemilik
+// 22 Nov 2026). Dipakai server (DELETE /api/ujian/:id) dan klien (tombol Hapus), jadi keduanya selalu sejalan.
+export const STATUS_BOLEH_HAPUS: readonly StatusUjian[] = ['draf', 'selesai', 'penilaian', 'dirilis'];
+
 // ---- Permintaan ----
 export const UjianBaruSchema = z
   .object({ judul: teks(BATAS.judul).min(1), durasi_menit: z.number().int().min(1).max(600) })
@@ -81,6 +88,16 @@ export type UjianUbah = z.infer<typeof UjianUbahSchema>;
 export const MODE_TAMPIL = ['nama', 'inisial'] as const;
 export const TampilanSchema = z.object({ mode_tampil: z.enum(MODE_TAMPIL) }).strict();
 
+// Satu rujukan buku untuk soal: PDF milik ujian yang sama + halaman (opsional). Satu soal boleh merujuk beberapa
+// buku (maks. BATAS.rujukanSoal), keputusan pemilik 22 Nov 2026.
+export const RujukanSchema = z
+  .object({
+    pdf_id: z.number().int().positive(),
+    halaman: z.number().int().min(1).max(100_000).nullable(),
+  })
+  .strict();
+export type Rujukan = z.infer<typeof RujukanSchema>;
+
 export const SoalInputSchema = z
   .object({
     judul: teks(BATAS.judul).min(1),
@@ -88,12 +105,14 @@ export const SoalInputSchema = z
     bobot: z.number().int().min(1).max(100),
     rubrik: RubrikSchema,
     jawaban_acuan: teks(BATAS.jawabanAcuan),
-    pdf_id: z.number().int().positive().nullable().default(null),
-    pdf_halaman: z.number().int().min(1).max(100_000).nullable().default(null),
+    rujukan: z.array(RujukanSchema).max(BATAS.rujukanSoal).default([]),
   })
   .strict()
-  // Sama dengan CHECK di skema: halaman hanya bermakna bila ada PDF-nya.
-  .refine((s) => s.pdf_halaman === null || s.pdf_id !== null, { path: ['pdf_halaman'] });
+  // Buku + halaman yang sama dua kali hanya menghasilkan dua tautan kembar untuk siswa.
+  .refine((s) => new Set(s.rujukan.map((r) => `${r.pdf_id}:${r.halaman}`)).size === s.rujukan.length, {
+    path: ['rujukan'],
+    message: 'rujukan kembar',
+  });
 export type SoalInput = z.input<typeof SoalInputSchema>;
 
 export const UrutanSoalSchema = z
@@ -156,8 +175,7 @@ export const SoalGuruSchema = z
     bobot: z.number().int(),
     rubrik: RubrikSchema,
     jawaban_acuan: z.string(),
-    pdf_id: z.number().int().nullable(),
-    pdf_halaman: z.number().int().nullable(),
+    rujukan: z.array(RujukanSchema),
   })
   .strict();
 export type SoalGuru = z.infer<typeof SoalGuruSchema>;

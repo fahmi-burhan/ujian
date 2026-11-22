@@ -226,7 +226,7 @@ Rincian kolom, tipe, dan constraint ada di [migrations/0001_skema_awal.sql](../m
 | `penguji` | id, username, nama, password_hash, dibuat_at | INTEGER/TEXT | username unik NOCASE 3–32; hash berawalan `scrypt$` | Akun guru |
 | `ujian` | id, penguji_id, judul, petunjuk, kode, durasi_menit, status, mode_tampil, dibuka/dimulai/dijeda/diakhiri/dirilis_at, total_jeda_ms, perpanjangan_ms, detak_at | INTEGER/TEXT | kode 6 karakter dari alfabet tanpa huruf mirip; 8 CHECK konsistensi status ↔ kolom waktu (mis. `dijeda_at` terisi ⇔ dijeda) | Inti state machine |
 | `pdf` | id, ujian_id, nama_tampil, nama_berkas, ukuran_byte, sha256 | INTEGER/TEXT | nama_berkas acak unik; UNIQUE(id, ujian_id) | Berkas di `uploads/` |
-| `soal` | id, ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman | INTEGER/TEXT | rubrik JSON valid; FK komposit (pdf_id, ujian_id), sehingga PDF harus dari ujian yang sama | Rubrik & acuan tidak pernah ke peserta |
+| `soal` | id, ujian_id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan | INTEGER/TEXT | rubrik JSON valid (kolom pdf_id/pdf_halaman dihapus di migrasi 0005) | Rubrik & acuan tidak pernah ke peserta |
 | `peserta` | id, ujian_id, nama, nomor, pin_hash, pin_dibuat_at, pin_gagal, terkunci_at, id_anonim, status, cara_kumpul, perpanjangan_ms, masuk_pertama_at, dikumpulkan_at | INTEGER/TEXT | (ujian, nama NOCASE, nomor) unik; PIN berupa hash scrypt; pin_gagal 0–5, terkunci ⇔ 5; id_anonim unik; status ↔ cara_kumpul ↔ dikumpulkan_at konsisten | `id_anonim` dikirim ke AI menggantikan nama |
 | `sesi` | id_hash, lingkup, penguji_id, peserta_id, ujian_id, tab_aktif, … | TEXT/INTEGER | PK = SHA-256 token cookie; CHECK per lingkup (tepat satu pemilik); tab_aktif hanya untuk peserta | Bisa dicabut seketika |
 | `tautan_proyektor` | kode_hash, ujian_id, kedaluwarsa_at, dipakai_at | TEXT/INTEGER | hash saja; sekali pakai | Membuka proyektor tanpa login guru |
@@ -235,6 +235,7 @@ Rincian kolom, tipe, dan constraint ada di [migrations/0001_skema_awal.sql](../m
 | `jawaban_versi` | peserta_id, soal_id, versi, isi, alasan, disimpan_at | INTEGER/TEXT | unik (peserta, soal, versi); alasan ∈ berkala/kumpul/pulih | Riwayat |
 | `jawaban_terlambat` | ujian_id, peserta_id, soal_id, isi, versi_dasar, diterima_at, alasan, keputusan | INTEGER/TEXT | FK komposit; keputusan ∈ menunggu/diterima/ditolak | Teks yang tiba setelah batas tidak hilang |
 | `event_integritas` | ujian_id, peserta_id, id_klien, jenis, mulai_at, mulai_klien_at, selesai_at, durasi_ms, detail_json, ditandai_wajar, catatan_penguji | INTEGER/TEXT | FK komposit (peserta, ujian); unik (peserta, id_klien) | Catatan, bukan vonis |
+| `soal_rujukan` (0005) | soal_id, ujian_id, urutan 1–5, pdf_id, halaman | INTEGER | PK (soal, urutan); FK komposit ke soal & pdf ujian yang sama, keduanya CASCADE | Satu soal bisa merujuk beberapa buku (keputusan pemilik 22 Nov) |
 | `log_aksi` | ujian_id, aktor, penguji_id, aksi, detail_json, dibuat_at | INTEGER/TEXT | aktor penguji ⇔ penguji_id terisi | Jejak aksi guru & server |
 | `penilaian` (0003) | ujian_id, peserta_id, soal_id, skor_json, catatan, sumber, status, versi_jawaban, dinilai_at, disetujui_at | INTEGER/TEXT | PK (peserta, soal); sumber ∈ manual/otomatis_kosong/ai; disetujui ⇔ disetujui_at | Angka nilai tidak disimpan, selalu dihitung (§9) |
 | `ai_run` (0004) | ujian_id, penguji_id, model, versi_prompt, status, alasan_berhenti, dibuat_at, selesai_at | INTEGER/TEXT | maks. satu `berjalan` per ujian (index unik sebagian) | Satu kali "Nilai dengan AI" (§9a) |
@@ -243,7 +244,8 @@ Rincian kolom, tipe, dan constraint ada di [migrations/0001_skema_awal.sql](../m
 
 Index dan alasannya:
 - `soal(ujian_id, urutan)`: soal berurutan per ujian.
-- `soal(pdf_id, ujian_id)`, `jawaban(soal_id, ujian_id)`, `jawaban_terlambat(peserta_id, ujian_id)`, `jawaban_terlambat(soal_id, ujian_id)`: kolom anak FK, supaya penghapusan/cascade tidak memindai seluruh tabel.
+- `soal_rujukan(ujian_id, soal_id, urutan)` (0006): memuat rujukan buku satu ujian sekaligus (setiap siswa memuat halaman ujian).
+- `soal_rujukan(pdf_id, ujian_id)`, `jawaban(soal_id, ujian_id)`, `jawaban_terlambat(peserta_id, ujian_id)`, `jawaban_terlambat(soal_id, ujian_id)`: kolom anak FK, supaya penghapusan/cascade tidak memindai seluruh tabel.
 - `ujian(penguji_id)`, `log_aksi(penguji_id)`: daftar per pemilik & FK.
 - `peserta(ujian_id, nama, nomor)` (UNIQUE): daftar pilihan nama per ujian, sekaligus mencegah nama dobel.
 - `sesi(peserta_id)`, `sesi(penguji_id)`, `sesi(ujian_id)`: mencabut semua sesi seseorang atau semua sesi proyektor sebuah ujian.
@@ -276,8 +278,8 @@ Index dan alasannya:
 | PATCH | `/api/ujian/:id` | penguji pemilik | draf | `{judul?, petunjuk?, durasi_menit?}` | | ujian | |
 | POST | `/api/ujian/:id/duplikat` | penguji pemilik | semua | `{salin_peserta}` | boolean | 201 ujian baru (draf, kode baru) | Menyalin judul + " (salinan)", petunjuk, durasi, mode tampil, soal + rubrik + acuan, dan PDF (berkas disalin ke nama acak baru). Peserta (nama + nomor saja, id anonim baru, tanpa PIN) hanya bila `salin_peserta`. Jawaban, event, log, dan waktu tidak ikut. Ujian asal tidak berubah (§12 no. 7) |
 | PATCH | `/api/ujian/:id/tampilan` | penguji pemilik | semua | `{mode_tampil}` | nama/inisial | ujian | |
-| DELETE | `/api/ujian/:id` | penguji pemilik | draf | — | — | 204 | Juga menghapus berkas PDF di disk |
-| POST/PATCH/DELETE | `/api/ujian/:id/soal[/:soalId]` | penguji pemilik | draf | `{judul, teks, bobot, rubrik, jawaban_acuan, pdf_id?, pdf_halaman?}` | rubrik: §9; pdf_id milik ujian ini | soal | |
+| DELETE | `/api/ujian/:id` | penguji pemilik | draf, selesai, penilaian, dirilis | — | — | 204 | Hapus **permanen** semua data ujian + berkas PDF di disk. 409 `ai_sedang_berjalan` bila antrean AI masih jalan. Catatan biaya AI tetap ada (ujian_id NULL). Klien meminta guru mengetik HAPUS dulu |
+| POST/PATCH/DELETE | `/api/ujian/:id/soal[/:soalId]` | penguji pemilik | draf | `{judul, teks, bobot, rubrik, jawaban_acuan, rujukan[{pdf_id, halaman}]}` | rubrik: §9; maks. 5 rujukan, tiap pdf_id milik ujian ini; daftar rujukan selalu dikirim utuh | soal | |
 | PUT | `/api/ujian/:id/soal/urutan` | penguji pemilik | draf | `{ids}` | persis semua soal ujian ini | 204 | |
 | POST | `/api/ujian/:id/pdf` | penguji pemilik | draf | body mentah `application/pdf` (maks 30 MB), header `X-Nama-Berkas` (URL-encoded) | diawali `%PDF-`, ukuran | `{id, nama_tampil, ukuran_byte, diunggah_at}` | **Tanpa dependensi unggah**: `express.raw` |
 | GET | `/api/ujian/:id/pdf/:pdfId` | penguji pemilik | semua | — | — | PDF (HTTP Range) | Untuk pratinjau guru |
@@ -334,7 +336,7 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 
 | Penerima | Payload | Field yang boleh |
 |---|---|---|
-| Peserta | `GET /api/peserta/ujian` | `id` (ujian), `status`, `waktu{sisa_ms, jam_server, dijeda}`, `judul`, `petunjuk`, `durasi_menit`, `jumlah_soal`, `pdf[{id, nama_tampil}]`, `saya{id, nama, status, cara_kumpul}`. (`id` & `saya.id` hanya untuk kunci penyangga lokal; id peserta memang sudah terlihat di daftar nama.) Hanya saat berlangsung/dijeda: `soal[{id, urutan, judul, teks, bobot, pdf_id, pdf_halaman}]`. Saat berlangsung/dijeda/selesai: `jawaban[{soal_id, isi, versi, ditandai}]` (jawaban **sendiri**, untuk mencocokkan penyangga; di fase selesai tanpa teks soal) |
+| Peserta | `GET /api/peserta/ujian` | `id` (ujian), `status`, `waktu{sisa_ms, jam_server, dijeda}`, `judul`, `petunjuk`, `durasi_menit`, `jumlah_soal`, `pdf[{id, nama_tampil}]`, `saya{id, nama, status, cara_kumpul}`. (`id` & `saya.id` hanya untuk kunci penyangga lokal; id peserta memang sudah terlihat di daftar nama.) Hanya saat berlangsung/dijeda: `soal[{id, urutan, judul, teks, bobot, rujukan[{pdf_id, halaman}]}]`. Saat berlangsung/dijeda/selesai: `jawaban[{soal_id, isi, versi, ditandai}]` (jawaban **sendiri**, untuk mencocokkan penyangga; di fase selesai tanpa teks soal) |
 | Peserta | SSE `status` | `{status}` saja (sinyal, lalu klien memanggil ulang GET) |
 | Peserta | SSE `waktu` | `{sisa_ms, jam_server, dijeda}` |
 | Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji`, `dihapus_penguji` |
@@ -423,3 +425,5 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 12. **Unduhan nilai (22 Nov, diubah):** CSV ternyata berantakan di Windows berformat en-US (pemisah `,`, desimal `.`), dan format CSV yang rapi di semua pengaturan tidak ada. Unduhan utama menjadi **.xlsx** (dibuat sendiri tanpa dependensi baru), dengan tautan CSV format Indonesia sebagai alternatif.
 13. **Penilaian AI (22 Nov):** penyedia Claude dulu; adapter OpenAI/model lokal menyusul. Model dipilih guru di halaman Penilaian (Haiku untuk percobaan, Sonnet untuk ujian sungguhan). Batas biaya dihitung per bulan (bawaan $3). AI menulis draf catatan untuk siswa yang disunting/disetujui guru. Rincian di §9a.
 14. **Tampilan (22 Nov):** nama aplikasi "Ujian" (bukan "Ujian Esai"), logo padat-minimal satu warna: otak dengan lekuk sebagai celah + pena yang menulis, tanpa latar (`client/src/komponen/LogoUjian.vue`; ikon tab `client/public/logo.svg`), dipasangkan dengan nama "ujian" huruf kecil tebal (`MerekUjian.vue`), judul tab "Ujian | Halaman", dan pemisah "|" menggantikan tanda pisah di teks tampilan.
+15. **Hapus ujian (22 Nov):** ujian yang sudah lalu (selesai, penilaian, dirilis) dan draf bisa dihapus **permanen** (bukan soft delete), dari tabel daftar ujian maupun halaman ujian. Konfirmasi lewat modal tanpa animasi yang merinci data yang ikut hilang dan meminta guru mengetik HAPUS. Ujian yang dibuka/berjalan tidak bisa dihapus.
+16. **Beberapa buku per soal (22 Nov):** satu soal bisa merujuk sampai 5 buku PDF, masing-masing dengan halaman opsional (migrasi 0005). Duplikasi ujian tetap menyalin berkas PDF di server, jadi guru tidak perlu mengunggah ulang.

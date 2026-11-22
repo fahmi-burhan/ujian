@@ -21,7 +21,7 @@ const pemilih = ref<HTMLInputElement | null>(null);
 const draf = computed(() => props.ujian.status === 'draf');
 
 function dirujuk(pdfId: number): number {
-  return props.ujian.soal.filter((s) => s.pdf_id === pdfId).length;
+  return props.ujian.soal.filter((s) => s.rujukan.some((r) => r.pdf_id === pdfId)).length;
 }
 
 async function unggah(): Promise<void> {

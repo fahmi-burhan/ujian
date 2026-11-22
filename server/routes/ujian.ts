@@ -17,8 +17,9 @@ import {
   TampilanSchema,
   UjianBaruSchema,
   UjianUbahSchema,
+  STATUS_BOLEH_HAPUS,
 } from '../../shared/ujian.ts';
-import type { PdfInfo, SoalGuru, UjianDetail, UjianRingkas } from '../../shared/ujian.ts';
+import type { PdfInfo, Rujukan, SoalGuru, UjianDetail, UjianRingkas } from '../../shared/ujian.ts';
 import { kodeAcak } from '../acak.ts';
 import { sesiDari } from '../auth/penjaga.ts';
 import { hapusBerkas } from '../berkas-pdf.ts';
@@ -29,7 +30,8 @@ import { siarkanStatus } from '../siaran.ts';
 import { bacaUjianWaktu, waktuPeserta } from '../waktu-ujian.ts';
 import { catatAksiGuru, ParamUjian, ujianMilik, ujianMilikDiStatus } from './milik.ts';
 
-type BarisSoal = Omit<SoalGuru, 'rubrik'> & { rubrik_json: string };
+type BarisSoal = Omit<SoalGuru, 'rubrik' | 'rujukan'> & { rubrik_json: string };
+
 
 // Rubrik di DB selalu ditulis setelah lolos Zod; bila tetap rusak (mis. diedit manual), ditampilkan
 // kosong agar guru bisa memperbaikinya, bukan membuat halaman error.
@@ -45,11 +47,26 @@ function bacaRubrik(json: string): SoalGuru['rubrik'] {
 export function muatSoalGuru(k: Konteks, ujianId: number): SoalGuru[] {
   const baris = k.db
     .prepare(
-      `SELECT id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan, pdf_id, pdf_halaman
+      `SELECT id, urutan, judul, teks, bobot, rubrik_json, jawaban_acuan
        FROM soal WHERE ujian_id = ? ORDER BY urutan, id`,
     )
     .all(ujianId) as BarisSoal[];
-  return baris.map(({ rubrik_json, ...s }) => ({ ...s, rubrik: bacaRubrik(rubrik_json) }));
+  const rujukan = muatRujukan(k, ujianId);
+  return baris.map(({ rubrik_json, ...s }) => ({ ...s, rubrik: bacaRubrik(rubrik_json), rujukan: rujukan.get(s.id) ?? [] }));
+}
+
+// Rujukan buku semua soal satu ujian (satu query), dikelompokkan per soal sesuai urutan rujukan.
+export function muatRujukan(k: Konteks, ujianId: number): Map<number, Rujukan[]> {
+  const peta = new Map<number, Rujukan[]>();
+  const baris = k.db
+    .prepare('SELECT soal_id, pdf_id, halaman FROM soal_rujukan WHERE ujian_id = ? ORDER BY soal_id, urutan')
+    .all(ujianId) as { soal_id: number; pdf_id: number; halaman: number | null }[];
+  for (const b of baris) {
+    const daftar = peta.get(b.soal_id) ?? [];
+    daftar.push({ pdf_id: b.pdf_id, halaman: b.halaman });
+    peta.set(b.soal_id, daftar);
+  }
+  return peta;
 }
 
 export function muatUjianDetail(k: Konteks, ujianId: number): UjianDetail {
@@ -171,18 +188,34 @@ export function ujianRouter(k: Konteks): Router {
     res.json(muatUjianDetail(k, id));
   });
 
-  // Hanya saat draf. Semua data ujian ikut terhapus (FK ON DELETE CASCADE), lalu berkas PDF-nya di disk.
+  // Hapus PERMANEN (bukan soft delete; keputusan pemilik 22 Nov 2026): soal, peserta, jawaban beserta riwayatnya,
+  // nilai, catatan aktivitas, log, draf AI, dan berkas PDF di disk. Boleh di status draf, selesai, penilaian, dan
+  // dirilis. Ditolak saat ujian dibuka/berjalan (siswa sedang tersambung) dan saat antrean AI masih berjalan.
+  // Catatan biaya AI tetap disimpan (ujian_id menjadi NULL) supaya batas biaya bulan ini tetap benar.
   router.delete('/ujian/:id', async (req, res) => {
     const { id } = validasi(ParamUjian, req.params);
-    ujianMilikDiStatus(k, res, id, ['draf']);
+    const ujian = ujianMilikDiStatus(k, res, id, STATUS_BOLEH_HAPUS);
+    // Termasuk run yang sudah dihentikan tetapi permintaannya masih di penyedia (tugas 'berjalan'): biayanya baru
+    // tercatat saat jawaban penyedia tiba.
+    const aiAktif = k.db
+      .prepare(
+        `SELECT 1 FROM ai_run WHERE ujian_id = ? AND status = 'berjalan'
+         UNION ALL SELECT 1 FROM ai_tugas WHERE ujian_id = ? AND status = 'berjalan' LIMIT 1`,
+      )
+      .get(id, id);
+    if (aiAktif) throw new GalatHttp(409, 'ai_sedang_berjalan');
     const berkas = k.db.transaction(() => {
       const nama = k.db.prepare('SELECT nama_berkas FROM pdf WHERE ujian_id = ?').pluck().all(id) as string[];
-      // Soal dihapus lebih dulu: FK soal → pdf tidak ber-CASCADE (menghapus PDF yang dirujuk ditolak).
-      k.db.prepare('DELETE FROM soal WHERE ujian_id = ?').run(id);
-      k.db.prepare("DELETE FROM ujian WHERE id = ? AND status = 'draf'").run(id);
+      const terhapus = k.db
+        .prepare(`DELETE FROM ujian WHERE id = ? AND status IN (${STATUS_BOLEH_HAPUS.map(() => '?').join(', ')})`)
+        .run(id, ...STATUS_BOLEH_HAPUS).changes;
+      if (terhapus === 0) throw new GalatHttp(409, 'status_tidak_sesuai');
       return nama;
     })();
+    console.log(`[ujian] ujian ${id} (status ${ujian.status}) dihapus permanen oleh guru`);
     k.sse.tutupPeserta((kon) => kon.ujianId === id, 'sesi_dicabut', { alasan: 'dihapus_penguji' });
+    // Dasbor guru (tab lain) & proyektor ujian ini ditutup juga, supaya tidak terus disegarkan untuk ujian yang hilang.
+    k.sse.tutupPantau((a) => a.ujianId === id, 'sesi_dicabut', { alasan: 'berakhir' });
     for (const nama of berkas) await hapusBerkas(k.uploadDir, nama);
     res.status(204).end();
   });

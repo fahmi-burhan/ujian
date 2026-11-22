@@ -49,8 +49,8 @@ function rujukan(pdfId: number | null, halaman: number | null): string {
         <article v-for="s in ujian.soal" :key="s.id" class="flex flex-col gap-1">
           <h3 class="font-semibold break-words">{{ s.urutan }}. {{ s.judul }} <span class="text-sm font-normal text-base-content/60">(bobot {{ s.bobot }})</span></h3>
           <p class="whitespace-pre-wrap break-words">{{ s.teks || '(teks soal masih kosong)' }}</p>
-          <p v-if="s.pdf_id" class="text-sm text-base-content/70">
-            <i class="fa-solid fa-book-open" aria-hidden="true"></i> Lihat: {{ rujukan(s.pdf_id, s.pdf_halaman) }}
+          <p v-for="(r, j) in s.rujukan" :key="j" class="text-sm text-base-content/70">
+            <i class="fa-solid fa-book-open" aria-hidden="true"></i> Lihat: {{ rujukan(r.pdf_id, r.halaman) }}
           </p>
         </article>
       </div>

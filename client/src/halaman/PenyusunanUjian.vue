@@ -12,13 +12,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
-import { masalahUjian, UjianDetailSchema } from '../../../shared/ujian.ts';
+import { masalahUjian, STATUS_BOLEH_HAPUS, UjianDetailSchema } from '../../../shared/ujian.ts';
 import type { UjianDetail } from '../../../shared/ujian.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
 import BukuPdf from '../komponen/guru/BukuPdf.vue';
 import DaftarPeserta from '../komponen/guru/DaftarPeserta.vue';
 import DaftarSoal from '../komponen/guru/DaftarSoal.vue';
 import DialogDuplikasi from '../komponen/guru/DialogDuplikasi.vue';
+import DialogHapusUjian from '../komponen/guru/DialogHapusUjian.vue';
 import InfoUjian from '../komponen/guru/InfoUjian.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import PratinjauUjian from '../komponen/guru/PratinjauUjian.vue';
@@ -44,6 +45,8 @@ const galat = ref('');
 const masalahServer = ref<string[]>([]);
 const sibuk = ref(false);
 const dialogDuplikasi = ref(false);
+const dialogHapus = ref(false);
+const bolehHapus = computed(() => ujian.value !== null && STATUS_BOLEH_HAPUS.includes(ujian.value.status));
 
 const draf = computed(() => ujian.value?.status === 'draf');
 const masalah = computed(() => (ujian.value ? masalahUjian(ujian.value) : []));
@@ -111,15 +114,9 @@ async function jalankan(aksi: Aksi): Promise<void> {
   }
 }
 
-async function hapus(): Promise<void> {
-  if (!ujian.value) return;
-  if (!window.confirm(`Hapus ujian "${ujian.value.judul}" beserta soal, PDF, dan daftar pesertanya? Ini tidak bisa dibatalkan.`)) return;
-  try {
-    await api('DELETE', `/api/ujian/${id.value}`);
-    await router.replace('/guru');
-  } catch (e) {
-    galat.value = pesanGalat(e);
-  }
+async function setelahHapus(): Promise<void> {
+  dialogHapus.value = false;
+  await router.replace('/guru');
 }
 
 watch(
@@ -226,7 +223,7 @@ watch(
               <button class="btn btn-ghost" type="button" @click="dialogDuplikasi = true">
                 <i class="fa-solid fa-copy" aria-hidden="true"></i> Duplikasi
               </button>
-              <button v-if="draf" class="btn btn-ghost text-error" type="button" @click="hapus">
+              <button v-if="bolehHapus" class="btn btn-ghost text-error" type="button" @click="dialogHapus = true">
                 <i class="fa-solid fa-trash" aria-hidden="true"></i> Hapus ujian
               </button>
               <button v-if="ujian.status === 'menunggu'" class="btn" type="button" :disabled="sibuk" @click="jalankan('kembali-draf')">
@@ -275,6 +272,12 @@ watch(
         <DaftarPeserta v-else-if="tab === 'peserta'" :ujian="ujian" @muat-ulang="muat" />
         <PratinjauUjian v-else :ujian="ujian" />
         <DialogDuplikasi v-if="dialogDuplikasi" :ujian="ujian" @tutup="dialogDuplikasi = false" />
+        <DialogHapusUjian
+          v-if="dialogHapus"
+          :ujian="{ id: ujian.id, judul: ujian.judul, status: ujian.status, jumlah_soal: ujian.soal.length, jumlah_peserta: ujian.jumlah_peserta }"
+          @tutup="dialogHapus = false"
+          @terhapus="setelahHapus"
+        />
       </template>
     </main>
   </div>
