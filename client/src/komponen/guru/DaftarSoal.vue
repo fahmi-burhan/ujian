@@ -74,6 +74,7 @@ function selesaiSunting(): void {
     v-if="disunting"
     :ujian="ujian"
     :soal="disunting === 'baru' ? null : disunting"
+    :hanya-baca="!draf"
     @selesai="selesaiSunting"
   />
 
@@ -81,7 +82,8 @@ function selesaiSunting(): void {
     <div class="card-body gap-3">
       <div v-if="galat" role="alert" class="alert alert-error"><span>{{ galat }}</span></div>
       <p v-if="!draf" class="text-sm text-base-content/70">
-        <i class="fa-solid fa-lock" aria-hidden="true"></i> Soal & rubrik terkunci setelah ujian dibuka.
+        <i class="fa-solid fa-lock" aria-hidden="true"></i> Soal & rubrik terkunci setelah ujian dibuka; tekan "Lihat"
+        untuk membacanya. Untuk memakai ulang dengan perubahan, duplikasi ujian ini.
       </p>
 
       <p v-if="ujian.soal.length === 0" class="text-base-content/70">Belum ada soal.</p>
@@ -97,6 +99,9 @@ function selesaiSunting(): void {
           </div>
           <span v-if="lengkap(s)" class="badge badge-success badge-sm gap-1"><i class="fa-solid fa-check" aria-hidden="true"></i> Lengkap</span>
           <span v-else class="badge badge-warning badge-sm">Belum lengkap</span>
+          <button v-if="!draf" type="button" class="btn btn-sm" @click="disunting = s">
+            <i class="fa-solid fa-eye" aria-hidden="true"></i> Lihat
+          </button>
           <div v-if="draf" class="flex gap-1">
             <button type="button" class="btn btn-sm btn-ghost" :disabled="i === 0" aria-label="Naikkan urutan" @click="geser(i, -1)">
               <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>

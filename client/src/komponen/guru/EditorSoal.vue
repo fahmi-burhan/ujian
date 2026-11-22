@@ -1,6 +1,7 @@
 <!--
   client/src/komponen/guru/EditorSoal.vue — formulir tambah/ubah satu soal: judul, teks, bobot, rujukan PDF,
-  jawaban acuan, dan rubrik.
+  jawaban acuan, dan rubrik. Dengan `hanyaBaca` (ujian sudah dibuka/selesai) formulir hanya bisa dilihat: semua isian
+  dinonaktifkan lewat <fieldset disabled> dan tombol Simpan tidak ada (server juga menolak perubahan di luar draf).
   Dipanggil oleh: client/src/komponen/guru/DaftarSoal.vue.
   Memanggil: POST /api/ujian/:id/soal, PATCH /api/ujian/:id/soal/:soalId; komponen EditorRubrik.
 -->
@@ -11,7 +12,7 @@ import type { Rubrik, SoalGuru, UjianDetail } from '../../../../shared/ujian.ts'
 import { api, pesanGalat } from '../../api.ts';
 import EditorRubrik from './EditorRubrik.vue';
 
-const props = defineProps<{ ujian: UjianDetail; soal: SoalGuru | null }>();
+const props = defineProps<{ ujian: UjianDetail; soal: SoalGuru | null; hanyaBaca?: boolean }>();
 const emit = defineEmits<{ selesai: [] }>();
 
 // Salinan dalam agar perubahan di formulir tidak langsung mengubah data induk sebelum disimpan.
@@ -60,10 +61,13 @@ async function simpan(): Promise<void> {
 <template>
   <form class="card bg-base-100 shadow" @submit.prevent="simpan">
     <div class="card-body gap-4">
-      <h2 class="card-title">{{ soal ? `Ubah soal ${soal.urutan}` : 'Soal baru' }}</h2>
+      <h2 class="card-title">
+        {{ hanyaBaca ? `Soal ${soal?.urutan}` : soal ? `Ubah soal ${soal.urutan}` : 'Soal baru' }}
+        <span v-if="hanyaBaca" class="badge badge-ghost gap-1"><i class="fa-solid fa-lock" aria-hidden="true"></i> hanya dilihat</span>
+      </h2>
       <div v-if="galat" role="alert" class="alert alert-error"><span>{{ galat }}</span></div>
 
-      <div class="grid gap-4 lg:grid-cols-2">
+      <fieldset :disabled="hanyaBaca" class="grid gap-4 lg:grid-cols-2 min-w-0">
         <div class="flex flex-col gap-3">
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium">Judul soal</span>
@@ -100,12 +104,12 @@ async function simpan(): Promise<void> {
             <span class="text-xs text-base-content/60"><i class="fa-solid fa-lock" aria-hidden="true"></i> Tidak pernah terlihat siswa.</span>
           </label>
         </div>
-        <EditorRubrik v-model="rubrik" />
-      </div>
+        <EditorRubrik v-model="rubrik" :hanya-baca="hanyaBaca" />
+      </fieldset>
 
       <div class="flex justify-end gap-2">
-        <button type="button" class="btn btn-ghost" @click="emit('selesai')">Batal</button>
-        <button type="submit" class="btn btn-primary" :disabled="menyimpan">
+        <button type="button" class="btn btn-ghost" @click="emit('selesai')">{{ hanyaBaca ? 'Kembali' : 'Batal' }}</button>
+        <button v-if="!hanyaBaca" type="submit" class="btn btn-primary" :disabled="menyimpan">
           <span v-if="menyimpan" class="loading loading-spinner"></span> Simpan soal
         </button>
       </div>

@@ -100,6 +100,8 @@ async function jalankan(aksi: Aksi): Promise<void> {
   sibuk.value = true;
   try {
     ujian.value = await api('POST', `/api/ujian/${id.value}/${aksi}`, { skema: UjianDetailSchema });
+    // Setelah Mulai, guru langsung dibawa ke dasbor pemantauan (permintaan pemilik 22 Nov).
+    if (aksi === 'mulai') await router.push(`/guru/ujian/${id.value}/pantau`);
   } catch (e) {
     galat.value = pesanGalat(e);
     if (e instanceof GalatApi && Array.isArray(e.data.masalah)) masalahServer.value = e.data.masalah as string[];

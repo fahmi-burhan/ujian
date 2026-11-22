@@ -6,7 +6,8 @@
   Dipanggil oleh: client/src/router.ts (hanya setelah lolos penjaga sesi guru).
   Memanggil: SSE /api/ujian/:id/pantau/stream (potret `pantau`), POST /api/ujian/:id/{mulai,jeda,lanjutkan,akhiri,
              perpanjang,tautan-proyektor,proyektor/cabut,peserta/buka-kunci-semua}, POST .../peserta/:pid/{reset-pin,
-             buka-kunci,buka-kembali}, PATCH .../event/:eventId; komponen DialogJawaban.
+             buka-kunci,buka-kembali}, PATCH .../event/:eventId; komponen DialogJawaban & DialogIsian (pengganti
+             prompt/confirm bawaan browser).
   Kata-kata di halaman ini netral (aturan keras #3): aktivitas adalah CATATAN, bukan vonis. Batas deteksi ditulis jujur
   (aturan keras #4).
 -->
@@ -18,6 +19,8 @@ import { BukaKunciSemuaHasilSchema, JENIS_EVENT, LABEL_EVENT, PantauSchema } fro
 import type { EventGuru, JenisEvent, Pantau, PesertaPantau } from '../../../shared/pantau.ts';
 import { formatSisa } from '../../../shared/time.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import DialogIsian from '../komponen/DialogIsian.vue';
+import type { PermintaanDialog } from '../komponen/DialogIsian.vue';
 import DialogJawaban from '../komponen/guru/DialogJawaban.vue';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import { durasiSingkat, jamWib, LABEL_AKSI, LABEL_STATUS_PESERTA, LABEL_STATUS_UJIAN, WARNA_STATUS_UJIAN } from '../label.ts';
@@ -194,60 +197,87 @@ function transisi(aksi: 'mulai' | 'jeda' | 'lanjutkan' | 'akhiri'): Promise<void
   return jalankan(() => api('POST', `/api/ujian/${id.value}/${aksi}`));
 }
 
-function mintaMenit(pesan: string, awal: number, min: number, maks: number): number | null {
-  const teks = window.prompt(pesan, String(awal));
-  if (teks === null) return null;
-  const n = Number(teks.trim());
-  if (!Number.isInteger(n) || n < min || n > maks || n === 0) {
-    galat.value = `Isi angka bulat ${min}…${maks} (bukan 0).`;
-    return null;
-  }
-  return n;
+// ---- Dialog (pengganti prompt/confirm bawaan browser; tanpa animasi) ----
+const dialog = ref<{ permintaan: PermintaanDialog; selesai: (nilai: string | null) => void } | null>(null);
+function tanya(permintaan: PermintaanDialog): Promise<string | null> {
+  return new Promise((selesai) => {
+    dialog.value = { permintaan, selesai };
+  });
+}
+function tutupDialog(nilai: string | null): void {
+  const d = dialog.value;
+  dialog.value = null;
+  d?.selesai(nilai);
 }
 
 // Koreksi negatif bisa membuat sisa waktu ≤ 0, sehingga siswa langsung dikumpulkan otomatis 10 dtk kemudian.
-function setujuiKoreksi(menit: number, siapa: string): boolean {
+async function setujuiKoreksi(menit: number, siapa: string): Promise<boolean> {
   if (menit >= 0) return true;
-  return window.confirm(
-    `Kurangi waktu ${siapa} ${-menit} menit? Ini hanya mengurangi perpanjangan yang sudah diberikan. Bila sisa waktu menjadi 0 atau kurang, jawaban langsung dikumpulkan otomatis.`,
-  );
+  const ok = await tanya({
+    jenis: 'konfirmasi',
+    judul: `Kurangi waktu ${siapa} ${-menit} menit?`,
+    pesan: 'Ini hanya mengurangi perpanjangan yang sudah diberikan. Bila sisa waktu menjadi 0 atau kurang, jawaban langsung dikumpulkan otomatis.',
+    labelOk: 'Ya, kurangi',
+    bahaya: true,
+  });
+  return ok !== null;
 }
 
-function perpanjangSemua(): Promise<void> | undefined {
+async function perpanjangSemua(): Promise<void> {
   const menit = menitSemua.value;
-  if (!setujuiKoreksi(menit, 'semua siswa')) return;
-  return jalankan(
+  if (!(await setujuiKoreksi(menit, 'semua siswa'))) return;
+  await jalankan(
     () => api('POST', `/api/ujian/${id.value}/perpanjang`, { body: { menit } }),
     menit > 0 ? `Semua siswa mendapat tambahan ${menit} menit.` : `Waktu semua siswa dikurangi ${-menit} menit.`,
   );
 }
 
-function perpanjangSatu(p: PesertaPantau): Promise<void> | undefined {
-  const menit = mintaMenit(
-    `Perpanjangan untuk ${p.nama} (menit, −120…120; negatif untuk koreksi salah ketik):`,
-    5,
-    -120,
-    120,
-  );
-  if (menit === null || !setujuiKoreksi(menit, p.nama)) return;
-  return jalankan(
+async function perpanjangSatu(p: PesertaPantau): Promise<void> {
+  const isi = await tanya({
+    jenis: 'angka',
+    judul: `Perpanjangan waktu untuk ${p.nama}`,
+    pesan: 'Menit tambahan (−120…120). Angka negatif untuk koreksi salah ketik.',
+    nilai: '5',
+    min: -120,
+    max: 120,
+    labelOk: 'Simpan',
+  });
+  if (isi === null) return;
+  const menit = Number(isi);
+  if (!(await setujuiKoreksi(menit, p.nama))) return;
+  await jalankan(
     () => api('POST', `/api/ujian/${id.value}/perpanjang`, { body: { menit, peserta_id: p.id } }),
     `${p.nama}: perpanjangan ${menit} menit.`,
   );
 }
 
-function bukaKembali(p: PesertaPantau): Promise<void> | undefined {
-  const menit = mintaMenit(`Buka kembali ${p.nama}. Sisa waktunya menjadi minimal berapa menit? (1…120)`, 5, 1, 120);
-  if (menit === null) return;
-  return jalankan(
-    () => api('POST', `/api/ujian/${id.value}/peserta/${p.id}/buka-kembali`, { body: { menit } }),
+async function bukaKembali(p: PesertaPantau): Promise<void> {
+  const isi = await tanya({
+    jenis: 'angka',
+    judul: `Buka kembali ${p.nama}`,
+    pesan: 'Sisa waktunya menjadi minimal berapa menit? (1…120)',
+    nilai: '5',
+    min: 1,
+    max: 120,
+    labelOk: 'Buka kembali',
+  });
+  if (isi === null) return;
+  await jalankan(
+    () => api('POST', `/api/ujian/${id.value}/peserta/${p.id}/buka-kembali`, { body: { menit: Number(isi) } }),
     `${p.nama} bisa mengerjakan lagi.`,
   );
 }
 
-function resetPin(p: PesertaPantau): Promise<void> | undefined {
-  if (!window.confirm(`Reset PIN ${p.nama}? Sesi ${p.nama} di laptopnya ditutup, lalu ia masuk lagi dan membuat PIN baru. Jawabannya tetap aman.`)) return;
-  return jalankan(() => api('POST', `/api/ujian/${id.value}/peserta/${p.id}/reset-pin`), `PIN ${p.nama} direset.`);
+async function resetPin(p: PesertaPantau): Promise<void> {
+  const ok = await tanya({
+    jenis: 'konfirmasi',
+    judul: `Reset PIN ${p.nama}?`,
+    pesan: `Sesi ${p.nama} di laptopnya ditutup, lalu ia masuk lagi dan membuat PIN baru. Jawabannya tetap aman.`,
+    labelOk: 'Reset PIN',
+    bahaya: true,
+  });
+  if (ok === null) return;
+  await jalankan(() => api('POST', `/api/ujian/${id.value}/peserta/${p.id}/reset-pin`), `PIN ${p.nama} direset.`);
 }
 
 function bukaKunci(p: PesertaPantau): Promise<void> {
@@ -262,15 +292,29 @@ function bukaKunciSemua(): Promise<void> {
   });
 }
 
+// Tandai/batalkan "wajar" langsung satu klik; catatan ditambahkan terpisah lewat tombol "Catatan".
 async function tandaiWajar(e: EventGuru): Promise<void> {
-  let catatan = e.catatan_penguji;
-  if (!e.ditandai_wajar) {
-    const isi = window.prompt('Catatan (opsional), mis. "notifikasi antivirus, sudah dicek":', catatan);
-    if (isi === null) return;
-    catatan = isi.slice(0, 500);
-  }
   await jalankan(() =>
-    api('PATCH', `/api/ujian/${id.value}/event/${e.id}`, { body: { ditandai_wajar: !e.ditandai_wajar, catatan_penguji: catatan } }),
+    api('PATCH', `/api/ujian/${id.value}/event/${e.id}`, {
+      body: { ditandai_wajar: !e.ditandai_wajar, catatan_penguji: e.catatan_penguji },
+    }),
+  );
+}
+
+async function ubahCatatan(e: EventGuru): Promise<void> {
+  const isi = await tanya({
+    jenis: 'teks',
+    judul: `Catatan untuk aktivitas ${namaPeserta.value.get(e.peserta_id) ?? ''}`,
+    pesan: 'Mis. "notifikasi antivirus, sudah dicek". Kosongkan untuk menghapus catatan.',
+    nilai: e.catatan_penguji,
+    maksPanjang: 500,
+    labelOk: 'Simpan catatan',
+  });
+  if (isi === null) return;
+  await jalankan(() =>
+    api('PATCH', `/api/ujian/${id.value}/event/${e.id}`, {
+      body: { ditandai_wajar: e.ditandai_wajar, catatan_penguji: isi.slice(0, 500) },
+    }),
   );
 }
 
@@ -291,9 +335,15 @@ async function bukaProyektor(): Promise<void> {
   if (galat.value && jendela) jendela.close();
 }
 
-function cabutProyektor(): Promise<void> | undefined {
-  if (!window.confirm('Tutup semua layar proyektor ujian ini? Untuk membukanya lagi, buat kode baru.')) return;
-  return jalankan(() => api('POST', `/api/ujian/${id.value}/proyektor/cabut`), 'Layar proyektor ditutup.');
+async function cabutProyektor(): Promise<void> {
+  const ok = await tanya({
+    jenis: 'konfirmasi',
+    judul: 'Tutup semua layar proyektor ujian ini?',
+    pesan: 'Untuk membukanya lagi, buat kode baru dengan tombol "Buka layar proyektor".',
+    labelOk: 'Tutup proyektor',
+  });
+  if (ok === null) return;
+  await jalankan(() => api('POST', `/api/ujian/${id.value}/proyektor/cabut`), 'Layar proyektor ditutup.');
 }
 </script>
 
@@ -540,6 +590,9 @@ function cabutProyektor(): Promise<void> | undefined {
                 <button type="button" class="btn btn-xs" :class="e.ditandai_wajar ? 'btn-ghost' : 'btn-outline'" :disabled="sibuk" @click="tandaiWajar(e)">
                   {{ e.ditandai_wajar ? 'Batalkan "wajar"' : 'Tandai wajar' }}
                 </button>
+                <button v-if="e.ditandai_wajar || e.catatan_penguji" type="button" class="btn btn-xs btn-ghost" :disabled="sibuk" @click="ubahCatatan(e)">
+                  <i class="fa-solid fa-pen" aria-hidden="true"></i> {{ e.catatan_penguji ? 'Ubah catatan' : 'Catatan' }}
+                </button>
               </li>
             </ul>
           </div>
@@ -566,6 +619,7 @@ function cabutProyektor(): Promise<void> | undefined {
       </template>
     </main>
 
+    <DialogIsian v-if="dialog" :permintaan="dialog.permintaan" @ok="tutupDialog" @batal="tutupDialog(null)" />
     <DialogJawaban v-if="dilihat" :ujian-id="id" :peserta-id="dilihat.id" @tutup="dilihat = null" />
   </div>
 </template>
