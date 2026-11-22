@@ -124,7 +124,7 @@ function hanyaAngka(nilai: string): string {
     <div class="card bg-base-100 shadow-xl w-full max-w-lg">
       <div class="card-body gap-4">
         <h1 class="card-title text-2xl">
-          <LogoUjian class="w-10 h-10" />
+          <LogoUjian class="w-10 h-10 text-primary" />
           Masuk Ujian
         </h1>
 

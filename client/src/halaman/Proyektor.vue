@@ -238,7 +238,7 @@ onBeforeUnmount(() => {
       <form class="card bg-base-200 w-full max-w-md" @submit.prevent="tukarKode(kode)">
         <div class="card-body gap-3">
           <h1 class="card-title text-2xl">
-            <LogoUjian class="w-10 h-10" />
+            <LogoUjian class="w-10 h-10 text-primary" />
             Layar Proyektor
           </h1>
           <p class="text-base-content/70">Ketik kode proyektor dari dasbor guru (berlaku 10 menit, sekali pakai).</p>

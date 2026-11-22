@@ -36,7 +36,7 @@ async function keluar(): Promise<void> {
   <header class="navbar bg-base-100 shadow-sm px-4">
     <div class="flex-1">
       <RouterLink to="/guru" class="flex items-center gap-2 text-lg font-semibold">
-        <LogoUjian class="w-8 h-8" />
+        <LogoUjian class="w-8 h-8 text-primary" />
         <span>Ujian <span class="text-base-content/40 font-normal">|</span> Guru</span>
       </RouterLink>
     </div>
