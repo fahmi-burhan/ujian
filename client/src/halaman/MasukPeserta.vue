@@ -14,7 +14,7 @@ import { DaftarNamaResponsSchema } from '../../../shared/auth.ts';
 import type { DaftarNamaRespons } from '../../../shared/auth.ts';
 import { PANJANG_KODE_UJIAN, rapikanKode } from '../../../shared/alfabet.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
-import LogoUjian from '../komponen/LogoUjian.vue';
+import MerekUjian from '../komponen/MerekUjian.vue';
 
 type Langkah = 'kode' | 'nama' | 'pin';
 type PesertaPilihan = DaftarNamaRespons['peserta'][number];
@@ -123,10 +123,8 @@ function hanyaAngka(nilai: string): string {
   <main class="min-h-screen bg-base-200 flex items-center justify-center p-4">
     <div class="card bg-base-100 shadow-xl w-full max-w-lg">
       <div class="card-body gap-4">
-        <h1 class="card-title text-2xl">
-          <LogoUjian class="w-10 h-10 text-primary" />
-          Masuk Ujian
-        </h1>
+        <MerekUjian ukuran="besar" class="self-center mb-1" />
+        <h1 class="card-title text-2xl">Masuk Ujian</h1>
 
         <ul class="steps steps-horizontal w-full text-sm">
           <li class="step" :class="{ 'step-primary': true }">Kode</li>

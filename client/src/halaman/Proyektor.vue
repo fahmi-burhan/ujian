@@ -18,7 +18,7 @@ import { JENIS_KEPERGIAN, LABEL_EVENT, ProyektorDataSchema } from '../../../shar
 import type { ProyektorData } from '../../../shared/pantau.ts';
 import { formatSisa } from '../../../shared/time.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
-import LogoUjian from '../komponen/LogoUjian.vue';
+import MerekUjian from '../komponen/MerekUjian.vue';
 import { durasiSingkat, jamWib } from '../label.ts';
 
 const route = useRoute();
@@ -237,10 +237,8 @@ onBeforeUnmount(() => {
     <div v-else class="min-h-[80vh] flex items-center justify-center">
       <form class="card bg-base-200 w-full max-w-md" @submit.prevent="tukarKode(kode)">
         <div class="card-body gap-3">
-          <h1 class="card-title text-2xl">
-            <LogoUjian class="w-10 h-10 text-primary" />
-            Layar Proyektor
-          </h1>
+          <MerekUjian ukuran="besar" class="self-center mb-1" />
+          <h1 class="card-title text-2xl">Layar Proyektor</h1>
           <p class="text-base-content/70">Ketik kode proyektor dari dasbor guru (berlaku 10 menit, sekali pakai).</p>
           <div v-if="galat" role="alert" class="alert alert-error">
             <span>{{ galat }}</span>
