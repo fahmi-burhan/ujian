@@ -23,9 +23,9 @@ Label yang dipakai: **FAKTA** = perilaku teknis browser/server yang bisa dicek; 
 | **dijeda** | Lanjutkan, perpanjang, atau akhiri. | Soal **tetap terlihat**, editor terkunci, pesan "Ujian dijeda pengawas". Event fokus tidak dicatat. | "DIJEDA" + sisa waktu beku. | Waktu berhenti. Simpanan yang terlambat dijawab `dijeda`; klien menyimpannya dan mengirim ulang setelah dilanjutkan. |
 | **selesai** | Melihat jawaban, riwayat versi, jawaban terlambat (terima/tolak), dan log; memulai penilaian. | Ringkasan "jawaban terkumpul"; tidak bisa mengubah. | "Selesai" + rekap jumlah terkumpul. | Kiriman setelah batas masuk ke `jawaban_terlambat`. |
 | **penilaian** | Menjalankan AI/manual, meninjau, mengubah skor, menyetujui. | "Nilai belum dirilis". | Tidak dipakai. | Antrean AI (Fase 6). |
-| **dirilis** | Ekspor CSV nilai & log; bisa menarik kembali rilis. | Nilai total, nilai per soal, dan catatan guru (field terpisah yang ditulis/disetujui guru, bukan alasan mentah AI). | Tidak dipakai. | — |
+| **dirilis** | Ekspor CSV nilai; bisa menarik kembali rilis. | Nilai akhir; per soal: nilai, jawabannya sendiri, kriteria beserta level yang dicapai (deskriptor), catatan guru (field yang ditulis/disetujui guru, bukan alasan mentah AI), dan jawaban acuan. | Tidak dipakai. | — |
 
-**KEPUTUSAN:** setelah rilis, peserta **tidak** melihat rubrik, nama kriteria, atau jawaban acuan (aturan keras #1). Pembahasan rinci dilakukan guru bersama siswa di kelas.
+**KEPUTUSAN (diubah 22 Nov 2026, §12 no. 9):** setelah rilis, peserta **melihat** kriteria, level yang dicapai, catatan guru, dan jawaban acuan untuk ujiannya sendiri, supaya bisa belajar dari hasilnya. Aturan keras #1 di CLAUDE.md disesuaikan: hanya di status `dirilis`, dicek server; sebelum itu dan setelah "tarik rilis" tetap terlarang. Proyektor tidak pernah menerima ini.
 
 ## 3. State machine ujian
 ```
@@ -53,8 +53,8 @@ Label yang dipakai: **FAKTA** = perilaku teknis browser/server yang bisa dicek; 
 | dijeda | berlangsung | Penguji | — | `total_jeda_ms += sekarang − dijeda_at`; `dijeda_at` = NULL; `detak_at` = sekarang |
 | berlangsung | selesai | Penguji ("Akhiri", konfirmasi dua langkah) | — | `diakhiri_at` = sekarang; peserta `mengerjakan` → `dikumpulkan (diakhiri_penguji)`; peserta `belum_masuk` **tetap** (= tidak hadir) |
 | dijeda | selesai | Penguji ("Akhiri") | — | Seperti di atas, ditambah `total_jeda_ms += diakhiri_at − dijeda_at` dan `dijeda_at` = NULL |
-| selesai | penilaian | Penguji | Tidak ada jawaban terlambat berstatus `menunggu` | Daftar penilaian dibuat (Fase 6) |
-| penilaian | dirilis | Penguji | Semua jawaban punya nilai yang disetujui | `dirilis_at` diisi |
+| selesai | penilaian | Penguji | Toleransi 10 dtk setelah Akhiri sudah lewat (+2 dtk cadangan), dan tidak ada jawaban terlambat berstatus `menunggu` (bila belum → 409 `belum_lengkap` + `masalah`) | Jawaban kosong siswa yang hadir langsung diberi 0 di semua kriteria (`otomatis_kosong`, disetujui; §12 no. 10). Jawaban tidak bisa berubah lagi |
+| penilaian | dirilis | Penguji | Semua jawaban siswa yang **hadir** (status `dikumpulkan`) punya nilai yang disetujui; siswa tidak hadir tidak dinilai (§12 no. 11) | `dirilis_at` diisi; siswa yang tersambung memuat ulang dan melihat nilainya |
 | dirilis | penilaian | Penguji | — | `dirilis_at` = NULL |
 
 **KEPUTUSAN (K2):** ujian **tidak pernah** diakhiri otomatis oleh server. Saat waktu global habis, server hanya mengumpulkan per peserta, sedangkan dasbor guru menampilkan "Waktu habis, tekan Akhiri bila sudah selesai". Dengan begitu guru tetap bisa memberi perpanjangan setelah waktu habis (misalnya Wi-Fi kelas putus di menit terakhir). Detak server menangani kasus server mati.
@@ -283,7 +283,7 @@ Index dan alasannya:
 | POST | `/api/ujian/:id/peserta` | penguji pemilik | draf, menunggu, berlangsung, dijeda | `{nama, nomor?}` | | peserta | Nama + nomor kembar (tanpa beda huruf besar/kecil) → 409 `nama_sudah_ada` |
 | PATCH/DELETE | `/api/ujian/:id/peserta/:pid` | penguji pemilik | draf | `{nama?, nomor?}` | | peserta / 204 | |
 | GET | `/api/ujian/:id/peserta` | penguji pemilik | semua | — | — | daftar + `punya_pin`, `terkunci` (tanpa hash PIN) | |
-| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah`. `buka` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` (fungsi `masalahUjian` di `shared/ujian.ts`, sama dengan daftar periksa di halaman guru). Fase 3: `buka` & `kembali-draf`. Fase 4: `mulai`, `jeda`, `lanjutkan`, `akhiri` (jeda/lanjutkan dimajukan dari Fase 5 karena jeda otomatis server butuh tombol Lanjutkan) |
+| POST | `/api/ujian/:id/{buka,kembali-draf,mulai,jeda,lanjutkan,akhiri,mulai-penilaian,rilis,tarik-rilis}` | penguji pemilik | sesuai §3 | — | — | ujian | 409 `transisi_tidak_sah`. `buka` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` (fungsi `masalahUjian` di `shared/ujian.ts`, sama dengan daftar periksa di halaman guru). Fase 3: `buka` & `kembali-draf`. Fase 4: `mulai`, `jeda`, `lanjutkan`, `akhiri` (jeda/lanjutkan dimajukan dari Fase 5 karena jeda otomatis server butuh tombol Lanjutkan). Fase 6: `mulai-penilaian`, `rilis`, `tarik-rilis` menjawab payload penilaian guru (bukan ujian); `rilis` yang belum lengkap → 409 `belum_lengkap` + `masalah[]` |
 | POST | `/api/ujian/:id/perpanjang` | penguji pemilik | berlangsung, dijeda | `{menit, peserta_id?}` | menit −120…120, ≠ 0 | ujian/peserta | Aturan §4 |
 | POST | `/api/ujian/:id/peserta/:pid/buka-kembali` | penguji pemilik | berlangsung, dijeda | `{menit}` | 1–120 | peserta | Sisa waktu peserta menjadi minimal X menit (§4) |
 | POST | `/api/ujian/:id/proyektor/cabut` | penguji pemilik | semua | — | — | 204 | Mencabut semua sesi proyektor ujian ini (`dicabut_penguji`) |
@@ -293,8 +293,12 @@ Index dan alasannya:
 | PATCH | `/api/ujian/:id/event/:eventId` | penguji pemilik | semua | `{ditandai_wajar, catatan_penguji}` | catatan ≤ 500 | 204 | Event "wajar" tidak dihitung di proyektor & ringkasan |
 | GET | `/api/ujian/:id/pantau` | penguji pemilik | semua | — | — | potret (daftar field §8.1) | |
 | GET | `/api/ujian/:id/peserta/:pid/jawaban` | penguji pemilik | berlangsung → dirilis | — | — | `{peserta, soal[{id, urutan, judul}], jawaban, riwayat, terlambat, event}` | Fase 5, hanya dibaca. Keputusan jawaban terlambat & pemulihan versi di Fase 6 |
-| POST | `/api/ujian/:id/peserta/:pid/jawaban/:soalId/pulihkan` | penguji pemilik | selesai, penilaian | `{versi}` | | jawaban | Riwayat alasan `pulih` |
-| PATCH | `/api/ujian/:id/terlambat/:tid` | penguji pemilik | berlangsung → penilaian | `{keputusan}` | diterima/ditolak | 204 | Diterima = menjadi versi baru jawaban |
+| POST | `/api/ujian/:id/peserta/:pid/jawaban/:soalId/pulihkan` | penguji pemilik | selesai | `{versi}` | | jawaban | **Belum dibuat.** Riwayat alasan `pulih`. Hanya sebelum penilaian dimulai, karena jawaban tidak berubah lagi selama penilaian |
+| PATCH | `/api/ujian/:id/terlambat/:tid` | penguji pemilik | berlangsung, dijeda, selesai | `{keputusan}` | diterima/ditolak | 204 | Diterima = menjadi versi baru jawaban (riwayat alasan `terlambat`). Fase 6: tidak lagi di fase penilaian, supaya jawaban yang dinilai tidak berubah |
+| GET | `/api/ujian/:id/penilaian` | penguji pemilik | selesai, penilaian, dirilis | — | — | `{ujian, soal (dengan rubrik & acuan), peserta (hadir), tidak_hadir, jawaban, nilai, terlambat (menunggu)}` | Fase 6 (manual) |
+| PUT | `/api/ujian/:id/penilaian/:pid/:soalId` | penguji pemilik | penilaian | `{skor: {id_kriteria: skor}, catatan, setujui}` | setiap kriteria rubrik wajib ada, skor = salah satu level; catatan ≤ 2.000 | nilai jawaban | Siswa tidak hadir → 409. Angka nilai dihitung dari skor (tidak disimpan) |
+| POST | `/api/ujian/:id/penilaian/setujui/:soalId` | penguji pemilik | penilaian | — | — | `{jumlah}` | "Setujui semua" draf satu soal (aturan keras #8) |
+| GET | `/api/ujian/:id/nilai.csv` | penguji pemilik | penilaian, dirilis | — | — | CSV | UTF-8 BOM, `;`, desimal koma, sel `= + - @` diberi `'`. Satu baris per siswa: nama, nomor, nilai tiap soal (0–100), nilai akhir; "belum dinilai" / "belum lengkap" / "tidak hadir" |
 | POST | `/api/ujian/:id/tautan-proyektor` | penguji pemilik | semua | — | — | `{kode, kedaluwarsa_at}` | Kode 8 karakter, 10 menit, sekali pakai |
 | POST | `/api/proyektor/masuk` | publik | semua | `{kode}` | 8 karakter dari alfabet tanpa huruf mirip | 204 + cookie `sesi_proyektor` | Halaman `/p` untuk mengetik kode |
 | GET | `/api/proyektor/saya` | proyektor | semua | — | — | `{ujian{judul, status}}` | Ditambahkan Fase 2 |
@@ -312,8 +316,8 @@ Index dan alasannya:
 | POST | `/api/peserta/kumpulkan` | peserta | berlangsung | `{versi: {soal_id: n}}` + `X-Tab-Id` | | 204 | 409 `belum_tersimpan`; dijeda → 409 `dijeda`; draf/menunggu → 409 `belum_mulai`. Sudah dikumpulkan → 204 (klik ganda bukan galat) |
 | POST | `/api/peserta/event` | peserta | berlangsung (peserta `mengerjakan`, tab aktif) | `{id_klien, jenis, tahap, mulai_klien_at, durasi_ms?, detail?}` + `X-Tab-Id` | jenis ∈ 4 jenis klien; `detail` hanya `{sinyal?, panjang?}` (strict) | 204 | Selain kondisi itu: 204 dan diabaikan. Aturan penerimaan di §6 |
 | SSE | `/api/peserta/stream?tab=<uuid>` | peserta | semua (draf: hanya event `status`) | `status`, `waktu`, `tab_lain_aktif`, `sesi_dicabut` | — | stream | Tidak tersambung ulang setelah `tab_lain_aktif`/`sesi_dicabut`. Saat draf (ujian ditutup kembali) stream tetap dijawab 200 dengan `status` saja. FAKTA: `EventSource` yang menerima status non-200 berhenti permanen, sehingga ruang tunggu tidak akan lanjut sendiri saat ujian dibuka lagi |
-| GET | `/api/peserta/nilai` | peserta | dirilis | — | — | nilai total, per soal, catatan guru | |
-| *(Fase 6)* | `/api/ujian/:id/penilaian/...` | penguji pemilik | penilaian | | | | Dirancang setelah penyedia AI dipilih |
+| GET | `/api/peserta/nilai` | peserta | dirilis (lainnya 409) | — | — | §8.1 | Siswa tidak hadir → `{hadir: false}` tanpa nilai |
+| *(Fase 6, AI)* | `/api/ujian/:id/penilaian/ai...` | penguji pemilik | penilaian | | | | Dirancang setelah penyedia AI dipilih; mengisi tabel `penilaian` dengan `sumber = 'ai'`, `status = 'draf'` |
 
 ### 8.1 Daftar putih payload (P12)
 Setiap payload punya skema Zod `.strict()` di `shared/`, dan tes otomatis memastikan kunci terlarang tidak pernah muncul.
@@ -328,6 +332,7 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 | Peserta | SSE `status` | `{status}` saja (sinyal, lalu klien memanggil ulang GET) |
 | Peserta | SSE `waktu` | `{sisa_ms, jam_server, dijeda}` |
 | Peserta | SSE `tab_lain_aktif` / `sesi_dicabut` | `{}` / `{alasan}` dengan alasan ∈ `keluar`, `diambil_alih`, `direset_penguji`, `dihapus_penguji` |
+| Peserta | `GET /api/peserta/nilai` (hanya `dirilis`) | `judul`, `status`, `hadir`, `nilai_akhir`, `soal[{urutan, judul, teks, bobot, porsi_persen, nilai_persen, jawaban (sendiri), acuan, catatan, kriteria[{nama, bobot, skor, skor_maks, deskriptor (level yang dicapai)}]}]`. Tanpa `rubrik_json` mentah, tanpa level lain, tanpa poin wajib |
 | Proyektor | SSE `proyektor` | `judul`, `status`, `kode` (hanya fase menunggu), `waktu{sisa_ms, jam_server, dijeda}` (global), `hadir`, `total`, `terkumpul`, `peserta[{label, status, terjawab, jumlah_soal, aktivitas{jenis: {kali, total_ms}}}]`, `terbaru[{label, jenis, durasi_ms, mulai_at}]` (maks 8; `durasi_ms` null = masih berlangsung), `jam_server`. Hanya 3 jenis kepergian yang tidak ditandai wajar |
 | Guru | `GET /pantau` & SSE `pantau` | `ujian{id, judul, kode, status, mode_tampil, jumlah_soal, waktu}`. Per peserta: `id`, `nama`, `nomor`, `status`, `cara_kumpul`, `tersambung`, `info_perangkat`, `terjawab`, `simpan_terakhir_at`, `sisa_ms`, `perpanjangan_ms`, `punya_pin`, `terkunci`, `aktivitas` (ringkasan per jenis, tanpa yang wajar), `terlambat_menunggu`. `event[]` (maks 300 terbaru, dengan `detail` dan tanda wajar), `log[]` (maks 100 aksi terbaru), `jam_server`. **Tanpa hash PIN, id anonim, teks soal, atau isi jawaban** |
 
@@ -359,10 +364,12 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 - **Nilai ujian** = Σ(nilai_soal × bobot_soal) ÷ Σ bobot_soal × 100 → 0–100, dibulatkan 1 desimal.
 - **Bobot bersifat relatif**, baik bobot kriteria di dalam soal maupun bobot soal di dalam ujian. Soal berbobot 20 baru bernilai "20 dari 100" bila jumlah bobot semua soal = 100. Tab "Soal & rubrik" menampilkan total bobot dan persentase tiap soal (§12 no. 8).
 - **Saran menyusun rubrik:** satu kriteria = satu hal yang dinilai. Jangan mencampur dua hal (mis. "berapa poin yang disebut" dan "ketepatan rinciannya") dalam satu tangga level, karena jawaban bisa cocok ke dua level atau tidak ke level mana pun, sehingga AI maupun guru menilai tidak konsisten. Deskriptor level sebaiknya bisa dihitung atau dicek (mis. "5 dari 6 rukun disebut").
-- **Belum diputuskan, ditunda ke Fase 6:**
-  - apakah rubrik/acuan boleh diedit di `selesai`/`penilaian` (perlu penilaian ulang);
-  - jawaban kosong = 0 tanpa AI;
-  - nilai peserta tidak hadir.
+- **Diputuskan (22 Nov 2026, §12):**
+  - Rubrik/acuan tetap terkunci setelah ujian dibuka (bisa dilihat, tidak bisa diubah). Untuk memakai ulang dengan perubahan, ujian diduplikasi.
+  - Jawaban kosong = 0 otomatis (disetujui), tetap bisa diubah guru.
+  - Siswa tidak hadir tidak dinilai; tertulis "tidak hadir" di rekap dan unduhan.
+  - Angka nilai tidak disimpan di DB. Yang disimpan hanya skor per kriteria (tabel `penilaian`, migrasi 0003), jadi angka selalu konsisten dengan rumus.
+  - Editor rubrik menampilkan porsi kriteria (% nilai soal) dan nilai tiap level (skor ÷ skor tertinggi kriteria).
 
 ## 10. Rute halaman (vue-router)
 | Rute | Peran | Isi |
@@ -387,9 +394,13 @@ Catatan: `aktivitas` dan `terbaru` di payload proyektor **tidak pernah** memuat 
 ## 12. Keputusan pemilik (20 Nov 2026)
 1. **Login ulang saat sesi lama masih aktif:** login baru langsung mengambil alih. Sesi lama dicabut, dan event "masuk ulang" muncul di dasbor guru dengan info perangkat.
 2. **Saat dijeda:** soal tetap terlihat, editor terkunci.
-4. **Cara masuk siswa:** kode ujian → pilih nama → PIN 4 angka yang dibuat siswa sendiri (menggantikan token kertas). MAC address tidak bisa dipakai (FAKTA: browser tidak memberi akses ke identitas perangkat keras).
 3. **Menempel teks dari luar halaman:** diblokir. Upayanya dicatat (panjang teks saja) dan tampil seperti aktivitas lain. Teks yang disalin dari halaman ujian sendiri tetap boleh ditempel.
+4. **Cara masuk siswa:** kode ujian → pilih nama → PIN 4 angka yang dibuat siswa sendiri (menggantikan token kertas). MAC address tidak bisa dipakai (FAKTA: browser tidak memberi akses ke identitas perangkat keras).
+5. **Batas laju (tinjauan Fase 2):** kode ujian & proyektor tanpa blokir per IP (kode benar selalu lolos, kode salah dijeda 1 dtk). Login guru memakai "perangkat dikenal" agar tidak bisa diblokir siswa. Dasbor guru mendapat tombol "Buka kunci semua" (Fase 5).
 6. **Kembali ke draf (tinjauan Fase 3):** siswa di ruang tunggu tidak dikeluarkan. Layarnya menampilkan "Ujian ditutup kembali oleh guru" dan kembali ke ruang tunggu biasa saat guru membuka lagi, tanpa mengetik PIN ulang. Selama draf, siswa hanya menerima sinyal status, tanpa isi ujian apa pun.
 7. **Duplikasi ujian (22 Nov):** ujian dari status apa pun bisa diduplikasi menjadi draf baru (soal, rubrik, acuan, PDF, petunjuk, durasi). Daftar peserta ikut disalin hanya bila guru mencentangnya di dialog (nama + nomor, tanpa PIN).
 8. **Tampilan bobot (22 Nov):** tab "Soal & rubrik" menampilkan total bobot dan persentase tiap soal. Rumus §9 tidak berubah.
-5. **Batas laju (tinjauan Fase 2):** kode ujian & proyektor tanpa blokir per IP (kode benar selalu lolos, kode salah dijeda 1 dtk). Login guru memakai "perangkat dikenal" agar tidak bisa diblokir siswa. Dasbor guru mendapat tombol "Buka kunci semua" (Fase 5).
+9. **Hasil untuk siswa (22 Nov):** setelah dirilis, siswa melihat nilai akhir; per soal: nilai, jawabannya, kriteria & level yang dicapai, catatan guru, dan jawaban acuan. Aturan keras #1 diubah untuk ini (hanya status `dirilis`).
+10. **Jawaban kosong (22 Nov):** otomatis 0 saat penilaian dimulai.
+11. **Tidak hadir (22 Nov):** tidak dinilai, ditulis "tidak hadir".
+12. **Unduhan nilai (22 Nov):** CSV untuk Excel (`;`, BOM, desimal koma), tanpa dependensi baru.

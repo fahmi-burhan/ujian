@@ -213,6 +213,13 @@ watch(
             </div>
 
             <div class="flex flex-wrap gap-2 justify-end">
+              <RouterLink
+                v-if="ujian.status === 'selesai' || ujian.status === 'penilaian' || ujian.status === 'dirilis'"
+                :to="`/guru/ujian/${ujian.id}/nilai`"
+                class="btn btn-primary"
+              >
+                <i class="fa-solid fa-pen-ruler" aria-hidden="true"></i> Penilaian
+              </RouterLink>
               <RouterLink v-if="!draf" :to="`/guru/ujian/${ujian.id}/pantau`" class="btn btn-primary btn-outline">
                 <i class="fa-solid fa-chart-column" aria-hidden="true"></i> Dasbor pemantauan
               </RouterLink>

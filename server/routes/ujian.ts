@@ -3,6 +3,7 @@
 // server/routes/ujian-duplikat.ts.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru dicek di app.ts untuk /api/ujian).
 // Memanggil: shared/ujian.ts (skema & cek kelengkapan), server/routes/milik.ts, server/berkas-pdf.ts, database.
+// muatSoalGuru/muatUjianDetail juga dipakai rute lain (ujian-jalan, ujian-duplikat, penilaian, peserta-nilai).
 // Kontrak: docs/DESAIN.md §3 (transisi) dan §8 (endpoint). Mulai/jeda/lanjutkan/akhiri ada di
 // server/routes/ujian-jalan.ts; transisi penilaian dibuat di Fase 6.
 import { Router } from 'express';

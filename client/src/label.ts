@@ -94,4 +94,9 @@ export const LABEL_AKSI: Record<string, string> = {
   cabut_proyektor: 'Layar proyektor ditutup',
   tandai_event: 'Aktivitas ditandai',
   duplikat_dari: 'Disalin dari ujian lain',
+  putuskan_terlambat: 'Kiriman terlambat diputuskan',
+  mulai_penilaian: 'Penilaian dimulai',
+  setujui_soal: 'Nilai satu soal disetujui',
+  rilis: 'Nilai dirilis',
+  tarik_rilis: 'Rilis ditarik',
 };

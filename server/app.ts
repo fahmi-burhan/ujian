@@ -26,6 +26,8 @@ import { pesertaGuruRouter } from './routes/peserta-guru.ts';
 import { soalRouter } from './routes/soal.ts';
 import { eventRouter } from './routes/event.ts';
 import { pantauRouter } from './routes/pantau.ts';
+import { penilaianRouter } from './routes/penilaian.ts';
+import { pesertaNilaiRouter } from './routes/peserta-nilai.ts';
 import { ujianRouter } from './routes/ujian.ts';
 import { ujianDuplikatRouter } from './routes/ujian-duplikat.ts';
 import { ujianAdminRouter } from './routes/ujian-admin.ts';
@@ -151,9 +153,11 @@ export async function createApp({
   app.use('/api', ujianAdminRouter(konteks));
   app.use('/api', ujianJalanRouter(konteks));
   app.use('/api', pantauRouter(konteks));
+  app.use('/api', penilaianRouter(konteks));
   // Rute siswa setelah masuk: wajib sesi peserta (dipasang di dalam pesertaUjianRouter untuk /api/peserta).
   app.use('/api', pesertaUjianRouter(konteks));
   app.use('/api', eventRouter(konteks));
+  app.use('/api', pesertaNilaiRouter(konteks));
   app.use('/api', jawabanRouter(konteks));
   // Rute /api yang tidak dikenal dijawab JSON 404, bukan halaman HTML aplikasi.
   app.use('/api', (_req, res) => {

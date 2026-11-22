@@ -32,6 +32,7 @@ import { buatHimpunanSalin } from '../tempel.ts';
 import type { HimpunanSalin } from '../tempel.ts';
 import type { Autosave, Bentrok, HasilKirim, Kiriman, Penyimpanan } from '../autosave.ts';
 import DialogBentrok from '../komponen/peserta/DialogBentrok.vue';
+import NilaiSiswa from '../komponen/peserta/NilaiSiswa.vue';
 import Pengerjaan from '../komponen/peserta/Pengerjaan.vue';
 import RuangTunggu from '../komponen/peserta/RuangTunggu.vue';
 import { uuid } from '../uuid.ts';
@@ -730,7 +731,7 @@ async function ulangiMuat(): Promise<void> {
       />
 
       <main v-else class="min-h-screen bg-base-200 flex items-center justify-center p-4">
-        <div class="card bg-base-100 shadow-xl w-full max-w-lg">
+        <div class="card bg-base-100 shadow-xl w-full" :class="ujian.status === 'dirilis' ? 'max-w-3xl my-4' : 'max-w-lg'">
           <div class="card-body gap-3">
             <p class="text-sm text-base-content/60">{{ ujian.judul }}</p>
             <h1 class="card-title">{{ ujian.saya.nama }}</h1>
@@ -741,10 +742,7 @@ async function ulangiMuat(): Promise<void> {
               </div>
             </template>
             <template v-else-if="ujian.status === 'dirilis'">
-              <div role="status" class="alert alert-success">
-                <i class="fa-solid fa-award" aria-hidden="true"></i>
-                <span>Nilai sudah dirilis. Guru akan membahas hasilnya bersama kelas.</span>
-              </div>
+              <NilaiSiswa />
             </template>
             <template v-else-if="ujian.saya.status === 'dikumpulkan'">
               <div role="status" class="alert alert-success">

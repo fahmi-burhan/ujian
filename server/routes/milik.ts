@@ -1,6 +1,7 @@
 // server/routes/milik.ts — pemeriksaan "ujian/peserta ini milik guru yang sedang masuk" dan "ujian sedang
 // di fase yang mengizinkan aksi ini", dipakai semua rute guru di bawah /api/ujian.
-// Dipanggil oleh: server/routes/ujian.ts, soal.ts, pdf.ts, peserta-guru.ts, ujian-admin.ts.
+// Dipanggil oleh: server/routes/ujian.ts, soal.ts, pdf.ts, peserta-guru.ts, ujian-admin.ts, ujian-jalan.ts,
+//                 ujian-duplikat.ts, pantau.ts, penilaian.ts.
 // Memanggil: server/auth/penjaga.ts (sesi dari res.locals), server/http.ts, database.
 // Aturan (docs/DESAIN.md §8): ID milik guru lain dijawab 404, bukan 403, supaya keberadaannya tidak bocor.
 // Fase yang salah dijawab 409 status_tidak_sesuai (mis. mengubah soal setelah ujian dibuka).

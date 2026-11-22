@@ -272,7 +272,11 @@ async function resetPin(p: PesertaPantau): Promise<void> {
   const ok = await tanya({
     jenis: 'konfirmasi',
     judul: `Reset PIN ${p.nama}?`,
-    pesan: `Sesi ${p.nama} di laptopnya ditutup, lalu ia masuk lagi dan membuat PIN baru. Jawabannya tetap aman.`,
+    pesan:
+      `Sesi ${p.nama} di laptopnya ditutup, lalu ia masuk lagi dan membuat PIN baru. Jawabannya tetap aman.` +
+      (data.value?.ujian.status === 'penilaian' || data.value?.ujian.status === 'dirilis'
+        ? `\n\nPerhatian: siapa pun yang pertama masuk dengan nama ini akan membuat PIN baru dan bisa melihat jawaban & nilai ${p.nama}. Pastikan ${p.nama} sendiri yang masuk.`
+        : ''),
     labelOk: 'Reset PIN',
     bahaya: true,
   });
@@ -354,6 +358,13 @@ async function cabutProyektor(): Promise<void> {
       <div class="flex flex-wrap items-center gap-2">
         <RouterLink :to="`/guru/ujian/${id}`" class="btn btn-sm btn-ghost">
           <i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Penyusunan ujian
+        </RouterLink>
+        <RouterLink
+          v-if="data && (data.ujian.status === 'selesai' || data.ujian.status === 'penilaian' || data.ujian.status === 'dirilis')"
+          :to="`/guru/ujian/${id}/nilai`"
+          class="btn btn-sm btn-primary"
+        >
+          <i class="fa-solid fa-pen-ruler" aria-hidden="true"></i> Penilaian
         </RouterLink>
         <span v-if="terputus" class="badge badge-warning gap-1">
           <i class="fa-solid fa-wifi" aria-hidden="true"></i> Menyambung ulang ke server…

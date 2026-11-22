@@ -26,6 +26,11 @@ export const router = createRouter({
       component: () => import('./halaman/PantauUjian.vue'),
       meta: { perluGuru: true },
     },
+    {
+      path: '/guru/ujian/:id(\\d+)/nilai',
+      component: () => import('./halaman/PenilaianUjian.vue'),
+      meta: { perluGuru: true },
+    },
     { path: '/p', component: () => import('./halaman/Proyektor.vue') },
     { path: '/:lainnya(.*)*', redirect: '/' },
   ],

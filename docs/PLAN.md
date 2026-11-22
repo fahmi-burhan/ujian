@@ -68,7 +68,7 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
 | 24–25 Nov | **3. Penyusunan ujian** ✅ 20 Nov | CRUD ujian/soal/rubrik/kunci, unggah PDF, impor peserta CSV, pratinjau, validasi kelengkapan | Ujian contoh lengkap bisa disiapkan |
 | 26–28 Nov | **4. Alur peserta** ✅ 21 Nov (deploy 22 Nov) | Ruang tunggu, gerbang mulai, navigasi bebas, autosave berversi + buffer lokal, timer, pembaca PDF, submit/auto-submit | Ujian bisa dikerjakan dari awal sampai akhir. **Deploy pertama ke VPS** |
 | 29–30 Nov | **5. Integritas & proyektor** ✅ 22 Nov | Event browser → SSE, peringatan ke peserta, dasbor penguji, layar proyektor, jeda/perpanjangan | Event muncul ≤ 3 dtk di dasbor & proyektor |
-| 30 Nov–1 Des | **6. Penilaian** | Penilaian manual dulu, lalu AI: antrean, prompt berversi, validasi Zod, tinjau/setujui, rilis, ekspor CSV | Draf nilai AI bisa ditinjau & dirilis |
+| 30 Nov–1 Des | **6. Penilaian** ◐ manual 22 Nov (AI menunggu keputusan) | Penilaian manual dulu, lalu AI: antrean, prompt berversi, validasi Zod, tinjau/setujui, rilis, ekspor CSV | Draf nilai AI bisa ditinjau & dirilis |
 | 2 Des | **7. Gladi resik** | Uji di VPS dengan 5+ perangkat, simulasi putus Wi-Fi & restart pm2, uji beban 30 peserta, README + checklist hari-H | Tidak ada jawaban hilang |
 | 3 Des | Pembekuan | Hanya perbaikan bug | — |
 | ~4 Des | **Ujian pertama** | — | — |
@@ -101,6 +101,10 @@ Perkakas bawaan stack (devDependencies, dipasang di Fase 0): `typescript` 6, `vu
   - KECIL yang diperbaiki: durasi kepergian terbuka dipotong saat siswa dikumpulkan; koreksi negatif dengan konfirmasi; layar penuh yang ditolak; tab non-aktif berhenti menulis localStorage; jam kejadian; `koneksi_putus` saat jeda; aliran guru/proyektor dengan sesi kedaluwarsa ditutup; kerapian kode.
   - Durasi saat laptop tidur (`performance.now`) dicatat TIDAK TERVERIFIKASI untuk gladi resik. 217 tes lulus.
 - **Dampak ke fase berikutnya:** Fase 6 memakai `GET /api/ujian/:id/peserta/:pid/jawaban` sebagai dasar tampilan penilaian, lalu menambah keputusan jawaban terlambat (`PATCH /terlambat/:tid`) dan pemulihan versi. Perilaku layar penuh, Keyboard Lock, blur saat notifikasi Windows, dan sidebar Copilot/Edge **belum dicoba di browser sungguhan** dan wajib dicoba pemilik (Chrome & Edge) sebelum gladi resik (Fase 7).
+
+**Fase 6 bagian manual (22 Nov):**
+- **Keputusan:** tabel `penilaian` (migrasi 0003) menyimpan skor per kriteria; angka dihitung dengan rumus bersama `shared/nilai.ts`. Penilaian per soal untuk semua siswa sekaligus. Jawaban terlambat diputuskan sebelum penilaian; jawaban kosong otomatis 0; siswa tidak hadir tidak dinilai. Rilis mensyaratkan semua jawaban siswa yang hadir disetujui. Setelah rilis siswa melihat kriteria, catatan, dan jawaban acuan; aturan keras #1 diubah atas keputusan pemilik. Unduhan CSV untuk Excel. Sebelum Fase 6 ada perbaikan dari uji pemilik: PDF bergulir bersambung, dasbor otomatis setelah Mulai, persen kriteria/level di editor rubrik, soal bisa dilihat setelah dibuka, tandai "wajar" satu klik, dan dialog tanpa animasi.
+- **Dampak ke langkah berikutnya:** penilaian AI tinggal mengisi tabel yang sama dengan `sumber = 'ai'` dan `status = 'draf'`, lalu guru menyetujui di halaman yang sama. Penyedia (Claude/OpenAI/model lokal lewat terowongan SSH) belum diputuskan.
 
 ## Catatan hosting (VPS)
 - Subdomain baru di aaPanel + sertifikat TLS (dibuat pemilik). Port aplikasi **8132** (keputusan pemilik 20 Nov 2026, juga nilai bawaan `PORT`); nginx meneruskan ke `127.0.0.1:8132`.
