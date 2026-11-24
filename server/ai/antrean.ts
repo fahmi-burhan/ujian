@@ -153,7 +153,7 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
   function setTugas(id: number, status: 'menunggu' | 'perlu_manual' | 'dibatalkan', galat: string | null, percobaan?: number): void {
     db.prepare('UPDATE ai_tugas SET status = ?, galat = ?, percobaan = COALESCE(?, percobaan), diubah_at = ? WHERE id = ?').run(
       status,
-      galat === null ? null : galat.slice(0, 500),
+      galat === null ? null : Array.from(galat).slice(0, 500).join(''),
       percobaan ?? null,
       jam(),
       id,

@@ -20,7 +20,7 @@ export const VERSI_PROMPT = 'nilai-v3';
 export const MAKS_TOKEN_KELUAR = 4000;
 export const PANJANG_MIN_KUTIPAN = 8;
 // Kutipan yang lebih pendek dari PANJANG_MIN_KUTIPAN (mis. jawaban "a. sah" atau "c. gak") hanya sah bila minimal
-// sepanjang ini DAN berdiri sebagai kata utuh di jawaban (temuan gladi 24 Nov: 4 jawaban pendek jatuh ke "perlu manual").
+// sepanjang ini DAN sama dengan satu bagian utuh jawaban (temuan gladi 24 Nov: 4 jawaban pendek jatuh ke "perlu manual").
 export const PANJANG_MIN_KATA = 3;
 // Sama dengan CHECK kolom penilaian.catatan (migrasi 0003) dan batas isian catatan guru (shared/nilai.ts).
 export const MAKS_CATATAN = 2000;
@@ -162,29 +162,37 @@ export function susunCatatan(rubrik: Rubrik, umum: string, perKriteria: Record<s
   return bagian.join('\n\n');
 }
 
-// Kutipan (sudah dinormalisasi) sah bila ada di jawaban dan cukup panjang untuk menjadi bukti. Potongan 1–2 huruf
-// hampir selalu "ditemukan" di teks mana pun, jadi bukan bukti. Aturannya:
-// - minimal PANJANG_MIN_KUTIPAN karakter (atau seluruh jawaban bila jawabannya lebih pendek), ATAU
-// - minimal PANJANG_MIN_KATA karakter dan berdiri sebagai kata utuh (diapit awal/akhir teks atau bukan huruf/angka),
-//   mis. "sah" pada "a. sah", tetapi tidak "sah" di dalam "masah".
-const BUKAN_HURUF = /[^\p{L}\p{N}]/u;
-export function periksaKutipan(kutipan: string, jawaban: string): 'ok' | 'pendek' | 'tidak_ada' {
-  if (kutipan.length >= Math.min(PANJANG_MIN_KUTIPAN, jawaban.length)) return jawaban.includes(kutipan) ? 'ok' : 'tidak_ada';
-  if (kutipan.length < PANJANG_MIN_KATA) return 'pendek';
-  let dari = 0;
-  let ketemu = false;
-  for (;;) {
-    const i = jawaban.indexOf(kutipan, dari);
-    if (i === -1) break;
-    ketemu = true;
-    const sebelum = i === 0 ? '' : jawaban.charAt(i - 1);
-    const sesudah = jawaban.charAt(i + kutipan.length);
-    const awalKata = sebelum === '' || BUKAN_HURUF.test(sebelum) || BUKAN_HURUF.test(kutipan.charAt(0));
-    const akhirKata = sesudah === '' || BUKAN_HURUF.test(sesudah) || BUKAN_HURUF.test(kutipan.charAt(kutipan.length - 1));
-    if (awalKata && akhirKata) return 'ok';
-    dari = i + 1;
+// Kutipan sah bila ada di jawaban dan cukup panjang untuk menjadi bukti. Potongan pendek hampir selalu "ditemukan"
+// di teks mana pun (mis. "yang", "dan"), jadi bukan bukti. Aturannya:
+// - minimal PANJANG_MIN_KUTIPAN karakter setelah normalisasi (atau seluruh jawaban bila jawabannya lebih pendek), ATAU
+// - kutipan pendek (minimal PANJANG_MIN_KATA karakter, ada huruf/angka) yang SAMA PERSIS dengan satu bagian utuh
+//   jawaban: isi satu butir/baris tanpa penanda "a." / "1)" / "-", dipotong di tanda baca . , ; : ! ?
+//   Contoh (temuan gladi 24 Nov): "sah" pada butir "a. sah", atau pada "a. Sah. Batasan bagi wakil ...". Kata "yang"
+//   di tengah kalimat, atau potongan di tengah kata (termasuk kata Arab berharakat), tidak pernah lolos.
+// Menerima teks MENTAH (kutipan & jawaban); normalisasi dilakukan di sini karena pembagian butir butuh baris baru.
+const PENANDA_BUTIR = /^\s*(?:[\p{L}\p{N}]{1,2}[.)]|[-•*–])\s*/u;
+const AKHIR_TANDA_BACA = /[\s.,;:!?]+$/u;
+
+function bagianUtuh(jawaban: string): Set<string> {
+  const hasil = new Set<string>();
+  for (const baris of jawaban.split(/\r?\n/)) {
+    for (const bagian of baris.replace(PENANDA_BUTIR, '').split(/[.,;:!?]+/)) {
+      const n = normalisasiBukti(bagian);
+      if (n !== '') hasil.add(n);
+    }
   }
-  return ketemu ? 'pendek' : 'tidak_ada';
+  return hasil;
+}
+
+export function periksaKutipan(kutipan: string, jawaban: string): 'ok' | 'pendek' | 'tidak_ada' {
+  const k = normalisasiBukti(kutipan);
+  const j = normalisasiBukti(jawaban);
+  if (k === '') return 'pendek';
+  if (k.length >= Math.min(PANJANG_MIN_KUTIPAN, j.length)) return j.includes(k) ? 'ok' : 'tidak_ada';
+  if (!j.includes(k)) return 'tidak_ada';
+  const inti = normalisasiBukti(kutipan.replace(PENANDA_BUTIR, '').replace(AKHIR_TANDA_BACA, ''));
+  if (inti.length >= PANJANG_MIN_KATA && /[\p{L}\p{N}]/u.test(inti) && bagianUtuh(jawaban).has(inti)) return 'ok';
+  return 'pendek';
 }
 
 export type HasilPeriksa = { ok: true; hasil: HasilAi } | { ok: false; masalah: string };
@@ -202,17 +210,18 @@ export function periksaKeluaran(teks: string, rubrik: Rubrik, jawaban: string): 
   const salahSkor = masalahSkor(rubrik, skor);
   if (salahSkor) return { ok: false, masalah: `skor AI tidak sah: ${salahSkor}` };
 
-  const jawabanNormal = normalisasiBukti(jawaban);
   const kriteria: HasilAi['kriteria'] = {};
   for (const k of rubrik.kriteria) {
     const isi = p.data.kriteria[k.id];
     if (!isi) return { ok: false, masalah: `kriteria "${k.nama}" tidak ada di keluaran AI` };
     const kutipan = isi.kutipan.map(rapikanKutipan).filter((q) => q !== '');
     for (const q of kutipan) {
-      const hasilKutipan = periksaKutipan(normalisasiBukti(q), jawabanNormal);
+      const hasilKutipan = periksaKutipan(q, jawaban);
       if (hasilKutipan !== 'ok') {
         // Potongan kutipan ikut dicatat (hanya terlihat guru) supaya kegagalan mudah dilacak.
-        const potongan = q.length > 80 ? `${q.slice(0, 80)}…` : q;
+        // Dipotong per karakter (bukan per unit UTF-16) supaya huruf di luar BMP tidak terbelah.
+        const huruf = Array.from(q);
+        const potongan = huruf.length > 80 ? `${huruf.slice(0, 80).join('')}…` : q;
         const sebab = hasilKutipan === 'pendek' ? 'terlalu pendek untuk menjadi bukti' : 'tidak ditemukan di jawaban siswa';
         return { ok: false, masalah: `kutipan bukti untuk "${k.nama}" ${sebab}: "${potongan}"` };
       }

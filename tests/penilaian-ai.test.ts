@@ -532,16 +532,23 @@ describe('validasi keluaran AI (aturan keras #7)', () => {
     assert.deepEqual(lewat, { ok: false, masalah: 'catatan untuk siswa terlalu panjang' });
   });
 
-  test('kutipan sependek satu kata sah bila berdiri sebagai kata utuh (temuan gladi: jawaban "a. sah")', () => {
-    const jawaban = normalisasiBukti('a. sah\nb. Yang menanggung adalah yang menyewakan\nc. gak');
+  test('kutipan pendek hanya sah bila sama dengan satu bagian utuh jawaban (temuan gladi: "a. sah")', () => {
+    const jawaban = 'a. sah\nb. Yang menanggung adalah yang menyewakan\nc. gak';
     assert.equal(periksaKutipan('sah', jawaban), 'ok');
     assert.equal(periksaKutipan('a. sah', jawaban), 'ok');
     assert.equal(periksaKutipan('gak', jawaban), 'ok');
+    assert.equal(periksaKutipan('Sah', 'a. Sah. Batasan bagi wakil adalah dia boleh melakukan wewenang'), 'ok');
     assert.equal(periksaKutipan('ang', jawaban), 'pendek', 'potongan di tengah kata bukan bukti');
     assert.equal(periksaKutipan('ya', jawaban), 'pendek');
     assert.equal(periksaKutipan('batal', jawaban), 'tidak_ada');
-    assert.equal(periksaKutipan('masah', normalisasiBukti('jual beli masah')), 'ok');
-    assert.equal(periksaKutipan('sah', normalisasiBukti('jual beli masah')), 'pendek');
+    // Kata umum di tengah kalimat bukan bukti, juga di jawaban panjang (temuan penjaga-ujian).
+    const esai = 'Rukun wudhu ada enam, yang pertama niat dan yang kedua membasuh muka, lalu kedua tangan sampai siku.';
+    assert.equal(periksaKutipan('yang', esai), 'pendek');
+    assert.equal(periksaKutipan('dan', esai), 'pendek');
+    assert.equal(periksaKutipan('sah', 'jual beli masah'), 'pendek');
+    assert.equal(periksaKutipan('!!!', 'a. sah !!! b'), 'pendek', 'tanpa huruf/angka bukan bukti');
+    assert.equal(periksaKutipan('يْعُ', 'حكم البَيْعُ هنا'), 'pendek', 'potongan kata Arab berharakat bukan bukti');
+    assert.equal(periksaKutipan('صحيح', 'أ. صحيح\nب. باطل'), 'ok');
     const r2 = { kriteria: RUBRIK_1.kriteria, poin_wajib: [] };
     const ok = periksaKeluaran(
       JSON.stringify({ kriteria: { k1: { alasan: 'a', kutipan: ['sah'], skor: 5 }, k2: { alasan: 'b', kutipan: [], skor: 0 } }, catatan_umum: '', indikasi_instruksi: { ada: false, keterangan: '' } }),
