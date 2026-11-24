@@ -280,6 +280,45 @@ describe('dasbor guru & proyektor', () => {
     assert.equal(aliran.event.at(-1)?.event, 'sesi_dicabut');
   });
 
+  test('tandai wajar semua: semua atau satu jenis saja, catatan guru tetap, hanya pemilik', async () => {
+    const budi = await masukSiswa(1);
+    await aksi('mulai');
+    a.majukanBerdetak(MENIT);
+    await lapor(budi, { mulai_klien_at: T0 + 30_000, tahap: 'selesai', durasi_ms: 15_000 });
+    await lapor(budi, { jenis: 'fokus_hilang', mulai_klien_at: T0 + 40_000, tahap: 'selesai', durasi_ms: 3000 });
+    await lapor(budi, { jenis: 'fokus_hilang', mulai_klien_at: T0 + 45_000, tahap: 'selesai', durasi_ms: 2000 });
+    const satu = a.db.prepare("SELECT id FROM event_integritas WHERE jenis = 'fokus_hilang' ORDER BY id LIMIT 1").pluck().get() as number;
+    await guru.minta('PATCH', `/api/ujian/1/event/${satu}`, { body: { ditandai_wajar: false, catatan_penguji: 'cek nanti' } });
+
+    // Kepergian yang masih berjalan (belum selesai) tidak ikut ditandai.
+    await lapor(budi, { jenis: 'fokus_hilang', mulai_klien_at: T0 + 50_000, tahap: 'mulai' });
+    const sampai = a.db.prepare('SELECT MAX(id) FROM event_integritas').pluck().get() as number;
+    const semua = (b: Record<string, unknown>) => ({ body: { sampai_id: sampai, ...b } });
+    assert.equal((await a.klien().minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({}))).status, 401);
+    assert.equal((await budi.k.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({}))).status, 401);
+    assert.equal((await guru.minta('POST', '/api/ujian/2/event/tandai-wajar-semua', semua({}))).status, 404);
+    const r1 = await guru.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({ jenis: 'fokus_hilang' }));
+    assert.deepEqual([r1.status, r1.body], [200, { jumlah: 2 }]);
+    const wajar = () => a.db.prepare('SELECT jenis, ditandai_wajar, catatan_penguji FROM event_integritas ORDER BY id').all();
+    assert.deepEqual(wajar(), [
+      { jenis: 'tab_tersembunyi', ditandai_wajar: 0, catatan_penguji: '' },
+      { jenis: 'fokus_hilang', ditandai_wajar: 1, catatan_penguji: 'cek nanti' },
+      { jenis: 'fokus_hilang', ditandai_wajar: 1, catatan_penguji: '' },
+      { jenis: 'fokus_hilang', ditandai_wajar: 0, catatan_penguji: '' },
+    ]);
+    // Aktivitas yang datang setelah guru mengonfirmasi (id > sampai_id) juga tidak ikut.
+    await lapor(budi, { jenis: 'tab_tersembunyi', mulai_klien_at: T0 + 55_000, tahap: 'selesai', durasi_ms: 1000 });
+    const r2 = await guru.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({ jenis: null }));
+    assert.deepEqual(r2.body, { jumlah: 1 });
+    assert.equal(a.db.prepare('SELECT COUNT(*) FROM event_integritas WHERE ditandai_wajar = 0').pluck().get(), 2);
+    const log = () => a.db.prepare("SELECT COUNT(*) FROM log_aksi WHERE aksi = 'tandai_event_semua'").pluck().get();
+    assert.equal(log(), 2);
+    assert.deepEqual((await guru.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({}))).body, { jumlah: 0 });
+    assert.equal(log(), 2, 'tidak ada yang berubah → tidak dicatat');
+    assert.equal((await guru.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', semua({ jenis: 'curang' }))).status, 400);
+    assert.equal((await guru.minta('POST', '/api/ujian/1/event/tandai-wajar-semua', { body: {} })).status, 400);
+  });
+
   test('aliran guru: hanya pemilik; sesi siswa & proyektor ditolak', async () => {
     const budi = await masukSiswa(1);
     assert.equal((await budi.k.minta('GET', '/api/ujian/1/pantau')).status, 401);

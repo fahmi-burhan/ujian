@@ -79,6 +79,15 @@ export const TandaiEventSchema = z
 
 export const BukaKunciSemuaHasilSchema = z.object({ jumlah: z.number().int() }).strict();
 
+// "Tandai wajar semua" (permintaan pemilik 24 Nov): aktivitas yang belum ditandai, atau hanya satu jenis (mengikuti
+// saringan di dasbor). Hanya yang SUDAH selesai dan id-nya ≤ `sampai_id` (aktivitas terakhir yang dilihat guru saat
+// mengonfirmasi): kepergian yang masih berjalan bisa berubah jenis/durasinya, dan yang datang belakangan belum dilihat.
+// Hasilnya {jumlah} yang baru ditandai.
+export const TandaiWajarSemuaSchema = z
+  .object({ jenis: z.enum(JENIS_EVENT).nullable().default(null), sampai_id: z.number().int().positive() })
+  .strict();
+export const TandaiWajarSemuaHasilSchema = z.object({ jumlah: z.number().int() }).strict();
+
 // ---- Ringkasan aktivitas per jenis: {jenis: {kali, total_ms}} ----
 const RingkasanSchema = z.record(z.string(), z.object({ kali: z.number().int(), total_ms: z.number().int() }).strict());
 export type Ringkasan = z.infer<typeof RingkasanSchema>;

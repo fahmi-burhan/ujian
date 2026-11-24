@@ -296,6 +296,7 @@ Index dan alasannya:
 | POST | `/api/ujian/:id/peserta/:pid/buka-kunci` | penguji pemilik | semua kecuali draf | — | — | 204 | `pin_gagal` = 0, PIN tetap. Draf → 409 `status_tidak_sesuai` |
 | POST | `/api/ujian/:id/peserta/buka-kunci-semua` | penguji pemilik | semua kecuali draf | — | — | `{jumlah}` | Fase 5. Membuka semua nama yang terkunci (PIN tetap). Dasbor meminta konfirmasi. Dicatat di `log_aksi` |
 | PATCH | `/api/ujian/:id/event/:eventId` | penguji pemilik | semua | `{ditandai_wajar, catatan_penguji}` | catatan ≤ 500 | 204 | Event "wajar" tidak dihitung di proyektor & ringkasan |
+| POST | `/api/ujian/:id/event/tandai-wajar-semua` | penguji pemilik | semua | `{jenis?, sampai_id}` | jenis ∈ JENIS_EVENT atau null (semua); sampai_id > 0 | `{jumlah}` | Menandai "wajar" event yang belum ditandai, **sudah selesai**, dan id ≤ `sampai_id` (yang dilihat guru saat konfirmasi); opsional satu jenis. Catatan guru tidak diubah; log hanya bila ada yang ditandai |
 | GET | `/api/ujian/:id/pantau` | penguji pemilik | semua | — | — | potret (daftar field §8.1) | |
 | GET | `/api/ujian/:id/peserta/:pid/jawaban` | penguji pemilik | berlangsung → dirilis | — | — | `{peserta, soal[{id, urutan, judul}], jawaban, riwayat, terlambat, event}` | Fase 5, hanya dibaca. Keputusan jawaban terlambat & pemulihan versi di Fase 6 |
 | POST | `/api/ujian/:id/peserta/:pid/jawaban/:soalId/pulihkan` | penguji pemilik | selesai | `{versi}` | | jawaban | **Belum dibuat.** Riwayat alasan `pulih`. Hanya sebelum penilaian dimulai, karena jawaban tidak berubah lagi selama penilaian |

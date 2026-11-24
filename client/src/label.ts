@@ -93,6 +93,7 @@ export const LABEL_AKSI: Record<string, string> = {
   ubah_tampilan: 'Mode tampil proyektor diubah',
   cabut_proyektor: 'Layar proyektor ditutup',
   tandai_event: 'Aktivitas ditandai',
+  tandai_event_semua: 'Semua aktivitas ditandai wajar',
   duplikat_dari: 'Disalin dari ujian lain',
   putuskan_terlambat: 'Kiriman terlambat diputuskan',
   mulai_penilaian: 'Penilaian dimulai',

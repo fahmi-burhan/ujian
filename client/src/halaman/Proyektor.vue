@@ -240,7 +240,9 @@ onBeforeUnmount(() => {
               {{ sisa === null ? '–' : formatSisa(sisa) }}
             </div>
             <div class="text-xl xl:text-2xl min-w-0">
-              <p><strong>{{ data.terkumpul }}</strong> dari {{ data.hadir }} sudah mengumpulkan</p>
+              <span class="badge badge-success badge-lg h-auto gap-2 px-4 py-1 text-xl xl:text-2xl font-semibold tabular-nums whitespace-nowrap">
+                <i class="fa-solid fa-circle-check" aria-hidden="true"></i> {{ data.terkumpul }} / {{ data.hadir }} selesai
+              </span>
               <p v-if="data.status === 'dijeda'" class="text-warning font-bold">Ujian dijeda pengawas</p>
             </div>
             <div v-if="data.kode" class="ml-auto flex items-center gap-3 shrink-0">

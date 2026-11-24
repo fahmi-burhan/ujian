@@ -15,10 +15,11 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { TautanProyektorSchema } from '../../../shared/auth.ts';
-import { BukaKunciSemuaHasilSchema, JENIS_EVENT, LABEL_EVENT, PantauSchema } from '../../../shared/pantau.ts';
+import { BukaKunciSemuaHasilSchema, JENIS_EVENT, LABEL_EVENT, PantauSchema, TandaiWajarSemuaHasilSchema } from '../../../shared/pantau.ts';
 import type { EventGuru, JenisEvent, Pantau, PesertaPantau } from '../../../shared/pantau.ts';
 import { formatSisa } from '../../../shared/time.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import { konfirmasi } from '../konfirmasi.ts';
 import DialogIsian from '../komponen/DialogIsian.vue';
 import type { PermintaanDialog } from '../komponen/DialogIsian.vue';
 import DialogJawaban from '../komponen/guru/DialogJawaban.vue';
@@ -305,6 +306,34 @@ async function tandaiWajar(e: EventGuru): Promise<void> {
   );
 }
 
+// Tandai wajar semua aktivitas yang belum ditandai dan sudah selesai, mengikuti saringan jenis yang sedang dipilih.
+// Kepergian yang masih berjalan dilewati (jenis/durasinya masih bisa berubah).
+const bisaDitandai = computed(() => eventTampil.value.filter((e) => !e.ditandai_wajar && e.selesai_at !== null));
+const belumWajar = computed(() => bisaDitandai.value.length);
+async function tandaiWajarSemua(): Promise<void> {
+  const jenis = (saringJenis.value || null) as JenisEvent | null;
+  const ok = await konfirmasi({
+    judul: jenis ? `Tandai wajar semua "${LABEL_EVENT[jenis]}"?` : 'Tandai wajar semua aktivitas?',
+    rincian: [
+      `${belumWajar.value} aktivitas yang sudah selesai dan belum ditandai akan ditandai "wajar", dan tidak lagi tampil di proyektor.`,
+      'Aktivitas yang masih berlangsung dilewati.',
+      'Masih bisa dibatalkan satu per satu lewat tombol "Batalkan wajar".',
+    ],
+    labelOk: 'Tandai wajar semua',
+    ikon: 'check-double',
+    warna: 'warning',
+  });
+  if (!ok) return;
+  // Hanya yang sudah dilihat guru saat mengonfirmasi; aktivitas yang datang sesudahnya tidak ikut.
+  const sampaiId = Math.max(0, ...(data.value?.event ?? []).map((e) => e.id));
+  if (sampaiId === 0) return;
+  let jumlah = 0;
+  await jalankan(async () => {
+    jumlah = (await api('POST', `/api/ujian/${id.value}/event/tandai-wajar-semua`, { body: { jenis, sampai_id: sampaiId }, skema: TandaiWajarSemuaHasilSchema })).jumlah;
+  });
+  if (!galat.value) info.value = `${jumlah} aktivitas ditandai wajar.`;
+}
+
 async function ubahCatatan(e: EventGuru): Promise<void> {
   const isi = await tanya({
     jenis: 'teks',
@@ -510,8 +539,10 @@ async function cabutProyektor(): Promise<void> {
                       <p v-if="p.terkunci" class="text-xs text-error"><i class="fa-solid fa-lock" aria-hidden="true"></i> Terkunci (5× PIN salah)</p>
                       <p v-else-if="!p.punya_pin && p.status === 'belum_masuk'" class="text-xs text-base-content/50">Belum membuat PIN</p>
                     </td>
-                    <td>
-                      <span class="badge badge-sm" :class="{ 'badge-success': p.status === 'mengerjakan', 'badge-neutral': p.status === 'dikumpulkan', 'badge-info': p.status === 'menunggu', 'badge-ghost': p.status === 'belum_masuk' }">
+                    <!-- whitespace-nowrap: label status ("Sudah mengumpulkan") tidak meluber keluar badge saat tabel sempit;
+                         tabel bisa digulir ke samping. -->
+                    <td class="whitespace-nowrap">
+                      <span class="badge badge-sm whitespace-nowrap" :class="{ 'badge-success': p.status === 'mengerjakan', 'badge-neutral': p.status === 'dikumpulkan', 'badge-info': p.status === 'menunggu', 'badge-ghost': p.status === 'belum_masuk' }">
                         {{ LABEL_STATUS_PESERTA[p.status] }}
                       </span>
                       <p v-if="p.cara_kumpul" class="text-xs text-base-content/60">{{ LABEL_CARA[p.cara_kumpul] }}</p>
@@ -578,6 +609,9 @@ async function cabutProyektor(): Promise<void> {
           <div class="card-body gap-2">
             <div class="flex flex-wrap items-center gap-2">
               <h2 class="card-title flex-1"><i class="fa-solid fa-list-ul" aria-hidden="true"></i> Aktivitas terbaru</h2>
+              <button type="button" class="btn btn-sm btn-outline" :disabled="sibuk || belumWajar === 0" @click="tandaiWajarSemua">
+                <i class="fa-solid fa-check-double" aria-hidden="true"></i> Tandai wajar semua
+              </button>
               <select v-model="saringJenis" class="select select-sm w-auto" aria-label="Saring jenis aktivitas">
                 <option value="">Semua jenis</option>
                 <option v-for="j in JENIS_EVENT" :key="j" :value="j">{{ LABEL_EVENT[j] }}</option>

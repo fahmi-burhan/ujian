@@ -2,12 +2,13 @@
 // pada aktivitas.
 // Dipanggil oleh: server/app.ts (dipasang di bawah /api; sesi guru dicek di app.ts untuk /api/ujian).
 // Memanggil: server/pantau.ts, server/sse.ts, server/routes/milik.ts, shared/pantau.ts, database.
-// Kontrak: docs/DESAIN.md §8 (GET /pantau, SSE /pantau/stream, GET jawaban, PATCH event) dan §8.1 (field guru).
+// Kontrak: docs/DESAIN.md §8 (GET /pantau, SSE /pantau/stream, GET jawaban, PATCH event, POST event/tandai-wajar-semua)
+// dan §8.1 (field guru).
 // Semua endpoint hanya untuk guru PEMILIK ujian (lainnya 404).
 import { Router } from 'express';
 import { z } from 'zod';
 import type { StatusPeserta, StatusUjian } from '../../shared/auth.ts';
-import { TandaiEventSchema } from '../../shared/pantau.ts';
+import { TandaiEventSchema, TandaiWajarSemuaSchema } from '../../shared/pantau.ts';
 import type { JawabanGuru } from '../../shared/pantau.ts';
 import { sesiDari } from '../auth/penjaga.ts';
 import { GalatHttp, validasi } from '../http.ts';
@@ -88,6 +89,26 @@ export function pantauRouter(k: Konteks): Router {
     })();
     beritahuPantau(k, id);
     res.status(204).end();
+  });
+
+  // Tandai "wajar" semua aktivitas yang belum ditandai, sudah selesai, dan sudah dilihat guru (id ≤ sampai_id);
+  // opsional satu jenis saja. Catatan guru yang ada tidak diubah.
+  router.post('/ujian/:id/event/tandai-wajar-semua', (req, res) => {
+    const { id } = validasi(ParamUjian, req.params);
+    ujianMilik(k, res, id);
+    const { jenis, sampai_id } = validasi(TandaiWajarSemuaSchema, req.body ?? {});
+    const jumlah = k.db.transaction(() => {
+      const n = k.db
+        .prepare(
+          `UPDATE event_integritas SET ditandai_wajar = 1
+           WHERE ujian_id = ? AND ditandai_wajar = 0 AND selesai_at IS NOT NULL AND id <= ? AND (? IS NULL OR jenis = ?)`,
+        )
+        .run(id, sampai_id, jenis, jenis).changes;
+      if (n > 0) catatAksiGuru(k, res, id, 'tandai_event_semua', { jumlah: n, jenis });
+      return n;
+    })();
+    if (jumlah > 0) beritahuPantau(k, id);
+    res.json({ jumlah });
   });
 
   return router;
