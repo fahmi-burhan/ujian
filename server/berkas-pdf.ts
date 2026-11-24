@@ -22,7 +22,8 @@ export function pathBerkas(uploadDir: string, namaBerkas: string): string {
   return join(uploadDir, namaBerkas);
 }
 
-// Mengirim berkas PDF. sendFile menangani Range (206) & ETag, sehingga PDF.js bisa memuat bertahap.
+// Mengirim berkas PDF. sendFile menangani Range (206) & ETag: siswa memakai Range untuk MELANJUTKAN unduhan buku
+// utuh yang terputus (client/src/unduh-buku.ts); pratinjau guru memakai PDF.js yang memuat bertahap.
 // no-store: berkas tidak tertinggal di cache laptop bersama.
 // `root` wajib: tanpa itu, modul send memeriksa SETIAP folder di path absolut dengan aturan dotfiles,
 // sehingga UPLOAD_DIR di bawah folder berawalan titik (mis. /srv/.apps/ujian) selalu 404.
@@ -34,6 +35,15 @@ export function kirimPdf(uploadDir: string, namaBerkas: string, res: Response, n
     { root: uploadDir, headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store' } },
     (galat) => {
       if (!galat) return;
+      // Browser membatalkan unduhan (mis. siswa menutup halaman, Wi-Fi putus): bukan galat server, tidak dicatat.
+      if ((galat as NodeJS.ErrnoException).code === 'ECONNABORTED') return;
+      // Galat setelah sebagian berkas terkirim (mis. gagal membaca disk): catat, lalu putus koneksinya supaya browser
+      // tahu unduhannya tidak lengkap dan melanjutkannya, bukan menunggu selamanya.
+      if (res.headersSent) {
+        console.error(`Gagal mengirim PDF ${namaBerkas}:`, galat.message);
+        res.destroy();
+        return;
+      }
       if ((galat as NodeJS.ErrnoException).code === 'ENOENT') next(new GalatHttp(404, 'tidak_ditemukan'));
       else next(galat);
     },

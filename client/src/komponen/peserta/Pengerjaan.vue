@@ -13,10 +13,27 @@ import type { SoalPeserta, UjianPeserta } from '../../../../shared/peserta.ts';
 import { BATAS_ISI_JAWABAN } from '../../../../shared/peserta.ts';
 import { formatSisa } from '../../../../shared/time.ts';
 import type { Autosave, KeadaanSoal } from '../../autosave.ts';
+import { statusBuku } from '../../buku.ts';
 import { layarPenuh, masukLayarPenuh } from '../../layar-penuh.ts';
 import { layarSentuh, pantauTinggiLayar, tinggiTerlihat } from '../../tinggi-layar.ts';
 
 const PembacaPdf = defineAsyncComponent(() => import('./PembacaPdf.vue'));
+
+// Persen unduhan semua buku (null = semua siap); tampil di tombol "Buku" selama masih diunduh. Bila ada yang gagal,
+// lencananya berubah menjadi tanda peringatan (pembaca buku punya tombol "Coba lagi").
+const bukuGagal = computed(() => props.ujian.pdf.some((p) => statusBuku.get(p.id)?.keadaan === 'gagal'));
+const persenBuku = computed(() => {
+  let terima = 0;
+  let total = 0;
+  let siap = true;
+  for (const p of props.ujian.pdf) {
+    const s = statusBuku.get(p.id);
+    if (s?.keadaan !== 'siap') siap = false;
+    terima += s?.keadaan === 'siap' ? p.ukuran_byte : Math.min(s?.diterima ?? 0, p.ukuran_byte);
+    total += p.ukuran_byte;
+  }
+  return siap || total === 0 ? null : Math.floor((terima / total) * 100);
+});
 
 // HP: halaman setinggi area terlihat (di atas keyboard), dan saat siswa mengetik di layar sentuh tampilannya
 // diringkas (daftar nomor soal, tombol kepala, dan panel buku disembunyikan sementara; teks soal dipendekkan)
@@ -165,6 +182,10 @@ watch(soal, (daftar) => {
       </button>
       <button v-if="ujian.pdf.length && !ringkas" class="btn btn-sm" :class="{ 'btn-active': panelBuku }" type="button" @click="alihPanelBuku">
         <i class="fa-solid fa-book-open" aria-hidden="true"></i> Buku
+        <span v-if="bukuGagal" class="badge badge-sm badge-warning" title="Ada buku yang gagal diunduh. Buka buku itu lalu tekan Coba lagi.">
+          <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+        </span>
+        <span v-else-if="persenBuku !== null" class="badge badge-sm tabular-nums" title="Buku sedang diunduh ke perangkat ini">{{ persenBuku }}%</span>
       </button>
       <button v-show="!ringkas" class="btn btn-sm btn-primary" type="button" :disabled="mengumpulkan || kunci !== null" @click="konfirmasi = true">
         <i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Kumpulkan

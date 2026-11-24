@@ -4,7 +4,8 @@
 // Kontrak (docs/DESAIN.md §8):
 // - Unggah: body mentah `application/pdf` maks 30 MB, nama asli di header X-Nama-Berkas (URL-encoded).
 //   Isi wajib diawali "%PDF-". Di disk disimpan dengan nama acak buatan server.
-// - Sajikan: mendukung HTTP Range (PDF.js memuat bertahap). Endpoint PDF untuk siswa ada di peserta-ujian.ts.
+// - Sajikan: mendukung HTTP Range (pratinjau guru dimuat bertahap oleh PDF.js; siswa mengunduh utuh dan memakai Range
+//   untuk melanjutkan unduhan yang putus). Endpoint PDF untuk siswa ada di peserta-ujian.ts.
 // - Hapus: rujukan soal ke PDF itu ikut terhapus (soal_rujukan ON DELETE CASCADE), soalnya tetap ada.
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';

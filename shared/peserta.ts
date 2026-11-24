@@ -56,7 +56,8 @@ export const UjianPesertaSchema = z
     petunjuk: z.string(),
     durasi_menit: z.number().int(),
     jumlah_soal: z.number().int(),
-    pdf: z.array(z.object({ id: z.number().int(), nama_tampil: z.string() }).strict()),
+    // ukuran_byte: untuk progres unduhan buku di perangkat siswa (client/src/buku.ts).
+    pdf: z.array(z.object({ id: z.number().int(), nama_tampil: z.string(), ukuran_byte: z.number().int() }).strict()),
     saya: z
       .object({
         id: z.number().int(),

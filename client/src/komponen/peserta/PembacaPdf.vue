@@ -4,21 +4,23 @@
   perbesar/perkecil, dan pilihan buku bila lebih dari satu.
   Dipanggil oleh: client/src/komponen/peserta/RuangTunggu.vue dan Pengerjaan.vue (sebagai komponen async, jadi
   PDF.js hanya diunduh saat pembaca pertama kali tampil).
-  Memanggil: client/src/pdf.ts (memuat dokumen), PDF.js (render canvas + lapisan teks).
+  Memanggil: client/src/pdf.ts (memuat dokumen), client/src/buku.ts (progres unduhan & posisi baca), PDF.js (render
+             canvas + lapisan teks). Buku dibaca dari memori setelah diunduh utuh; selama masih diunduh, progresnya tampil.
   Dirender ke <canvas> di dokumen yang sama, bukan viewer bawaan browser (memicu blur & menampilkan tombol unduh).
   Lapisan teks transparan di atas canvas membuat teks buku bisa diseleksi & disalin ke jawaban.
   Hemat memori: semua halaman berupa kotak kosong seukuran halaman; hanya halaman yang dekat layar (IntersectionObserver)
   yang digambar, dan gambar halaman yang jauh dilepas lagi. Buku ratusan halaman tetap ringan di laptop sekolah.
-  Posisi baca (halaman & zoom) diingat per buku di client/src/pdf.ts: ganti buku atau tutup-buka panel kembali ke
+  Posisi baca (halaman & zoom) diingat per buku di client/src/buku.ts: ganti buku atau tutup-buka panel kembali ke
   halaman terakhir. Tautan soal yang menyebut halaman tertentu tetap melompat ke halaman itu.
 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { bukaTerakhir, ingatPosisi, muatPdf, posisiBuku } from '../../pdf.ts';
+import { bukaTerakhir, formatMb, ingatPosisi, posisiBuku, statusBuku } from '../../buku.ts';
+import { muatPdf } from '../../pdf.ts';
 
-type Pdf = { id: number; nama_tampil: string };
+type Pdf = { id: number; nama_tampil: string; ukuran_byte: number };
 // `n` dinaikkan pemanggil setiap kali meminta lompat (mis. dua kali klik tautan halaman yang sama).
 type Permintaan = { pdfId: number; halaman: number | null; n: number };
 type Ukuran = { w: number; h: number };
@@ -43,6 +45,8 @@ const skala = ref(1);
 const versiTata = ref(0);
 
 const jumlahHalaman = computed(() => dokumen.value?.numPages ?? 0);
+// Progres unduhan buku yang sedang dibuka (selama belum siap, pembaca menampilkan progres, bukan halaman putih).
+const progres = computed(() => (pdfId.value === null ? undefined : statusBuku.get(pdfId.value)));
 const kotak = new Map<number, HTMLDivElement>();
 const ukuranDasar = new Map<number, Ukuran>();
 let ukuranHalaman1: Ukuran = { w: 595, h: 842 };
@@ -222,7 +226,7 @@ async function bukaPdf(id: number, ke = 1): Promise<void> {
     pasangPengamat();
     gulirKe(tujuan);
   } catch {
-    if (pdfId.value === id) galat.value = 'Buku gagal dimuat. Periksa koneksi, lalu tekan "Coba lagi".';
+    if (pdfId.value === id) galat.value = 'Buku gagal diunduh atau dibuka. Periksa Wi-Fi, lalu tekan "Coba lagi".';
   } finally {
     memuat.value = false;
   }
@@ -357,7 +361,19 @@ onBeforeUnmount(() => {
     </div>
 
     <div ref="wadah" class="relative flex-1 min-h-0 overflow-auto p-2" @scroll.passive="saatGulir">
-      <div v-if="memuat" class="flex items-center gap-2 p-4"><span class="loading loading-spinner"></span> Memuat buku…</div>
+      <div v-if="memuat" class="flex flex-col gap-2 p-4 max-w-sm">
+        <p class="flex items-center gap-2">
+          <span class="loading loading-spinner"></span>
+          {{ progres && progres.keadaan !== 'siap' ? 'Mengunduh buku…' : 'Membuka buku…' }}
+        </p>
+        <template v-if="progres && progres.keadaan !== 'siap'">
+          <progress class="progress progress-primary" :value="progres.diterima" :max="Math.max(1, progres.total ?? 0)"></progress>
+          <p class="text-sm text-base-content/70">
+            {{ formatMb(progres.diterima) }} dari {{ progres.total ? formatMb(progres.total) : '…' }} MB. Setelah selesai, buku
+            bisa dibaca lancar tanpa menunggu jaringan.
+          </p>
+        </template>
+      </div>
       <div v-if="galat" role="alert" class="alert alert-warning m-2">
         <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
         <span>{{ galat }}</span>

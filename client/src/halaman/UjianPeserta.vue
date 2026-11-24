@@ -35,6 +35,7 @@ import DialogBentrok from '../komponen/peserta/DialogBentrok.vue';
 import NilaiSiswa from '../komponen/peserta/NilaiSiswa.vue';
 import Pengerjaan from '../komponen/peserta/Pengerjaan.vue';
 import RuangTunggu from '../komponen/peserta/RuangTunggu.vue';
+import { hentikanUnduhan, lupakanBuku, siapkanBuku } from '../buku.ts';
 import { uuid } from '../uuid.ts';
 
 type Tahap = 'memuat' | 'draf' | 'siap' | 'galat';
@@ -220,6 +221,12 @@ function terapkan(data: UjianPeserta): void {
   // Lanjutkan. Aman dipanggil berulang.
   if (as && data.status === 'berlangsung' && data.saya.status === 'mengerjakan' && !tabLain.value) as.lanjutkan();
   if (data.status === 'penilaian' || data.status === 'dirilis') bersihkanLaptop(data);
+  // Buku diunduh utuh sejak ruang tunggu (client/src/buku.ts). Sudah mengumpulkan tetapi ujian masih berjalan: unduhan
+  // berhenti, buku yang sudah siap disimpan (perpanjangan waktu tidak memicu unduh ulang). Ujian selesai: dilepas.
+  if (['menunggu', 'berlangsung', 'dijeda'].includes(data.status)) {
+    if (data.saya.status !== 'dikumpulkan' && !tabLain.value) siapkanBuku(data.pdf);
+    else hentikanUnduhan();
+  } else lupakanBuku();
   // Himpunan salin murni lokal: disiapkan tanpa menunggu klaim tab, supaya blokir tempel selalu berlaku.
   if (!himpunan) himpunan = buatHimpunanSalin(`${awalanLokal(data)}salin`, penyimpananLokal);
   // Halaman yang tadinya di layar "ditutup kembali" (tanpa data ujian) baru bisa menyiapkan pencatat sekarang.
@@ -241,6 +248,7 @@ async function muat(): Promise<void> {
         saya.value = await api('GET', '/api/peserta/saya', { skema: PesertaSayaSchema });
         ujian.value = null;
         tahap.value = 'draf';
+        lupakanBuku();
       } catch (e2) {
         if (e2 instanceof GalatApi && e2.status === 401) sesiBerakhir('berakhir');
       }
@@ -368,6 +376,7 @@ function lanjutkanDiTabIni(): void {
 }
 
 function sesiBerakhir(alasan: AlasanSesiDicabut | 'berakhir'): void {
+  lupakanBuku();
   tutupAliran();
   autosave.value?.hentikan();
   pencatat?.hentikan();
@@ -472,6 +481,8 @@ watch(integritasAktif, (aktif) => {
 // (kuncinya dipakai bersama oleh semua tab ujian ini).
 watch(tabLain, (lain) => {
   if (lain) pencatat?.hentikan();
+  // Tab lain yang mengerjakan: tab ini berhenti mengunduh buku (Wi-Fi kelas tidak menanggung unduhan ganda).
+  if (lain) hentikanUnduhan();
 });
 // Layar penuh berhasil lagi: penutup kembali berlaku normal.
 watch(layarPenuh, (penuh) => {
@@ -645,6 +656,7 @@ function pilihBentrok(pilihan: 'server' | 'laptop'): void {
 
 async function keluar(): Promise<void> {
   tutupAliran();
+  lupakanBuku();
   try {
     await api('POST', '/api/peserta/keluar');
   } finally {
@@ -682,6 +694,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  lupakanBuku();
   clearInterval(detik);
   clearTimeout(pewaktuMuat);
   clearTimeout(pewaktuKlaim);

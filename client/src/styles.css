@@ -128,3 +128,31 @@
 .textLayer.selecting .endOfContent {
   top: 0;
 }
+
+/* Kotak halaman buku yang belum digambar (PembacaPdf.vue): tanda memuat, bukan putih polos. Kotak itu diisi kanvas
+   langsung oleh kode pembaca, jadi tandanya dibuat lewat :empty (hilang sendiri begitu kanvas masuk). */
+.halaman-pdf:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+.halaman-pdf:empty::before {
+  content: '';
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 9999px;
+  border: 2px solid #d1d5db;
+  border-top-color: #6b7280;
+  animation: putar-halaman 0.8s linear infinite;
+}
+.halaman-pdf:empty::after {
+  content: 'Memuat halaman…';
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+@keyframes putar-halaman {
+  to {
+    transform: rotate(360deg);
+  }
+}

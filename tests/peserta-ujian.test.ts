@@ -114,7 +114,8 @@ describe('ruang tunggu & Mulai', () => {
     const u = await ambilUjian(s);
     assert.equal(u.status, 'menunggu');
     assert.equal(u.jumlah_soal, 2);
-    assert.deepEqual(u.pdf, [{ id: 1, nama_tampil: 'Buku Ekonomi.pdf' }]);
+    assert.deepEqual(u.pdf.map((p) => [p.id, p.nama_tampil]), [[1, 'Buku Ekonomi.pdf']]);
+    assert.ok((u.pdf[0]?.ukuran_byte ?? 0) > 0);
     assert.equal(u.soal, undefined);
     assert.equal(u.jawaban, undefined);
     assert.deepEqual(u.waktu, { sisa_ms: DURASI_MS, jam_server: T0, dijeda: false });

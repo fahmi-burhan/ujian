@@ -2,12 +2,14 @@
   client/src/komponen/peserta/RuangTunggu.vue — ruang tunggu siswa (ujian "menunggu"): judul, petunjuk umum, durasi,
   jumlah soal, buku PDF yang sudah boleh dibaca, dan tombol layar penuh. Soal belum dikirim server sama sekali.
   Dipanggil oleh: client/src/halaman/UjianPeserta.vue.
-  Memanggil: PembacaPdf.vue (async: PDF.js baru diunduh saat komponen ini tampil), client/src/layar-penuh.ts.
+  Memanggil: PembacaPdf.vue (async: PDF.js baru diunduh saat komponen ini tampil), ProgresBuku.vue (unduhan buku
+             yang sudah berjalan sejak data ujian dimuat), client/src/layar-penuh.ts.
 -->
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue';
 import type { UjianPeserta } from '../../../../shared/peserta.ts';
 import { layarPenuh, masukLayarPenuh } from '../../layar-penuh.ts';
+import ProgresBuku from './ProgresBuku.vue';
 
 const PembacaPdf = defineAsyncComponent(() => import('./PembacaPdf.vue'));
 
@@ -36,6 +38,7 @@ defineEmits<{ keluar: [] }>();
             <li>Jawaban tersimpan otomatis, juga di perangkat ini bila Wi-Fi sempat putus.</li>
             <li v-if="ujian.pdf.length">Buku boleh dibaca dari sekarang.</li>
           </ul>
+          <ProgresBuku v-if="ujian.pdf.length" :daftar="ujian.pdf" class="border-t border-base-300 pt-3" />
           <button v-if="!layarPenuh" class="btn btn-primary" type="button" @click="masukLayarPenuh">
             <i class="fa-solid fa-expand" aria-hidden="true"></i> Masuk layar penuh
           </button>

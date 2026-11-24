@@ -76,7 +76,7 @@ export function pesertaUjianRouter(k: Konteks): Router {
       .get(ujian.id) as { judul: string; petunjuk: string };
     const nama = k.db.prepare('SELECT nama FROM peserta WHERE id = ?').pluck().get(peserta.id) as string;
     const pdf = k.db
-      .prepare('SELECT id, nama_tampil FROM pdf WHERE ujian_id = ? ORDER BY id')
+      .prepare('SELECT id, nama_tampil, ukuran_byte FROM pdf WHERE ujian_id = ? ORDER BY id')
       .all(ujian.id) as UjianPeserta['pdf'];
     const jumlahSoal = k.db.prepare('SELECT COUNT(*) FROM soal WHERE ujian_id = ?').pluck().get(ujian.id) as number;
     const body: UjianPeserta = {
