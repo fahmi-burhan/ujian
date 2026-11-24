@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="text-xl xl:text-2xl min-w-0">
               <span class="badge badge-success badge-lg h-auto gap-2 px-4 py-1 text-xl xl:text-2xl font-semibold tabular-nums whitespace-nowrap">
-                <i class="fa-solid fa-circle-check" aria-hidden="true"></i> {{ data.terkumpul }} / {{ data.hadir }} selesai
+                <i class="fa-solid fa-circle-check" aria-hidden="true"></i> {{ data.terkumpul }} / {{ data.hadir }} mengumpulkan
               </span>
               <p v-if="data.status === 'dijeda'" class="text-warning font-bold">Ujian dijeda pengawas</p>
             </div>
