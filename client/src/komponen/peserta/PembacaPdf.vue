@@ -9,12 +9,14 @@
   Lapisan teks transparan di atas canvas membuat teks buku bisa diseleksi & disalin ke jawaban.
   Hemat memori: semua halaman berupa kotak kosong seukuran halaman; hanya halaman yang dekat layar (IntersectionObserver)
   yang digambar, dan gambar halaman yang jauh dilepas lagi. Buku ratusan halaman tetap ringan di laptop sekolah.
+  Posisi baca (halaman & zoom) diingat per buku di client/src/pdf.ts: ganti buku atau tutup-buka panel kembali ke
+  halaman terakhir. Tautan soal yang menyebut halaman tertentu tetap melompat ke halaman itu.
 -->
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { TextLayer } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { muatPdf } from '../../pdf.ts';
+import { bukaTerakhir, ingatPosisi, muatPdf, posisiBuku } from '../../pdf.ts';
 
 type Pdf = { id: number; nama_tampil: string };
 // `n` dinaikkan pemanggil setiap kali meminta lompat (mis. dua kali klik tautan halaman yang sama).
@@ -25,7 +27,9 @@ type Gambar = { skala: number; batal: boolean; render: RenderTask | null; teks: 
 const props = defineProps<{ daftar: Pdf[]; permintaan?: Permintaan | null }>();
 
 const JARAK_HALAMAN = 8;
-const pdfId = ref<number | null>(props.daftar[0]?.id ?? null);
+// Buku terakhir yang dibaca (bila masih ada di daftar), atau buku pertama.
+const terakhir = bukaTerakhir();
+const pdfId = ref<number | null>(props.daftar.some((p) => p.id === terakhir) ? terakhir : (props.daftar[0]?.id ?? null));
 const dokumen = shallowRef<PDFDocumentProxy | null>(null);
 const halaman = ref(1);
 const isianHalaman = ref('1');
@@ -254,10 +258,17 @@ function pasLebar(): void {
   void tataUlang();
 }
 
-function gantiPdf(id: number, ke = 1): void {
+// `ke` null = halaman terakhir yang dibaca di buku itu (atau halaman 1). Zoom buku itu ikut dipulihkan.
+function gantiPdf(id: number, ke: number | null = null): void {
+  const ingat = posisiBuku(id);
+  zoom.value = ingat?.zoom ?? 1;
   pdfId.value = id;
-  void bukaPdf(id, ke);
+  void bukaPdf(id, ke ?? ingat?.halaman ?? 1);
 }
+
+watch([halaman, zoom], ([h, z]) => {
+  if (pdfId.value !== null && dokumen.value) ingatPosisi(pdfId.value, { halaman: h, zoom: z });
+});
 
 // Lompat dari tautan "lihat halaman X" di soal.
 watch(
@@ -265,16 +276,16 @@ watch(
   () => {
     const p = props.permintaan;
     if (!p) return;
-    if (p.pdfId !== pdfId.value || !dokumen.value) gantiPdf(p.pdfId, p.halaman ?? 1);
-    else keHalaman(p.halaman ?? 1);
+    if (p.pdfId !== pdfId.value || !dokumen.value) gantiPdf(p.pdfId, p.halaman);
+    else if (p.halaman !== null) keHalaman(p.halaman);
   },
 );
 
 onMounted(async () => {
   await nextTick();
   const awal = props.permintaan;
-  if (awal) gantiPdf(awal.pdfId, awal.halaman ?? 1);
-  else if (pdfId.value !== null) void bukaPdf(pdfId.value);
+  if (awal) gantiPdf(awal.pdfId, awal.halaman);
+  else if (pdfId.value !== null) gantiPdf(pdfId.value);
   // Panel diperlebar/dipersempit (mis. jendela berubah) → gambar disesuaikan, ditunda agar tidak render berulang.
   if (wadah.value && typeof ResizeObserver !== 'undefined') {
     pengamatUkuran = new ResizeObserver(() => {

@@ -2,19 +2,51 @@
   client/src/komponen/peserta/Pengerjaan.vue — layar mengerjakan: daftar soal (bebas urutan), teks soal, kotak
   jawaban dengan status simpan, tanda "cek lagi", panel buku PDF, sisa waktu, dan tombol Kumpulkan.
   Dipanggil oleh: client/src/halaman/UjianPeserta.vue (yang memegang autosave, aliran SSE, dan waktu).
-  Memanggil: client/src/autosave.ts (lewat props), PembacaPdf.vue (async), client/src/layar-penuh.ts.
+  Memanggil: client/src/autosave.ts (lewat props), PembacaPdf.vue (async), client/src/layar-penuh.ts,
+             client/src/tinggi-layar.ts (tinggi di atas keyboard HP + mode ringkas saat mengetik).
   Isi jawaban selalu dibaca dari autosave (satu sumber kebenaran), jadi pilihan saat bentrok langsung tampil.
   Teks soal & jawaban dirender sebagai teks ({{ }}), tidak pernah sebagai HTML.
 -->
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SoalPeserta, UjianPeserta } from '../../../../shared/peserta.ts';
 import { BATAS_ISI_JAWABAN } from '../../../../shared/peserta.ts';
 import { formatSisa } from '../../../../shared/time.ts';
 import type { Autosave, KeadaanSoal } from '../../autosave.ts';
 import { layarPenuh, masukLayarPenuh } from '../../layar-penuh.ts';
+import { layarSentuh, pantauTinggiLayar, tinggiTerlihat } from '../../tinggi-layar.ts';
 
 const PembacaPdf = defineAsyncComponent(() => import('./PembacaPdf.vue'));
+
+// HP: halaman setinggi area terlihat (di atas keyboard), dan saat siswa mengetik di layar sentuh tampilannya
+// diringkas (daftar nomor soal, tombol kepala, dan panel buku disembunyikan sementara; teks soal dipendekkan)
+// supaya seluruh kotak jawaban terlihat di atas keyboard (permintaan pemilik 24 Nov).
+const fokusJawaban = ref(false);
+let pewaktuBlur: ReturnType<typeof setTimeout> | undefined;
+// Keyboard di layar dianggap terbuka bila area terlihat jauh lebih pendek dari layar (keyboard ditutup lewat tombol
+// Back → mode ringkas berakhir walau kotak jawaban masih fokus).
+const keyboardTerbuka = computed(() => tinggiTerlihat.value !== null && tinggiTerlihat.value < window.screen.height * 0.75);
+const ringkas = computed(() => layarSentuh && fokusJawaban.value && keyboardTerbuka.value);
+function saatFokusJawaban(): void {
+  clearTimeout(pewaktuBlur);
+  fokusJawaban.value = true;
+}
+// Ditunda: di HP, mengetuk "Berikutnya"/"Tandai" memicu blur SEBELUM click. Bila tampilan langsung kembali penuh,
+// tombolnya bergeser dan ketukan meleset.
+function saatBlurJawaban(): void {
+  clearTimeout(pewaktuBlur);
+  pewaktuBlur = setTimeout(() => {
+    fokusJawaban.value = false;
+  }, 300);
+}
+let lepasTinggi: () => void = () => {};
+onMounted(() => {
+  lepasTinggi = pantauTinggiLayar();
+});
+onBeforeUnmount(() => {
+  lepasTinggi();
+  clearTimeout(pewaktuBlur);
+});
 
 const props = defineProps<{
   ujian: UjianPeserta;
@@ -59,15 +91,22 @@ const LABEL_KEADAAN: Record<KeadaanSoal, { teks: string; kelas: string; ikon: st
   tersimpan: { teks: 'Tersimpan', kelas: 'text-success', ikon: 'fa-circle-check' },
   menunggu: { teks: 'Menyimpan…', kelas: 'text-base-content/60', ikon: 'fa-pen' },
   mengirim: { teks: 'Menyimpan…', kelas: 'text-base-content/60', ikon: 'fa-arrows-rotate' },
-  gagal: { teks: 'Belum tersimpan di server. Disimpan di laptop, dicoba lagi otomatis', kelas: 'text-warning', ikon: 'fa-wifi' },
-  dijeda: { teks: 'Disimpan di laptop; dikirim setelah ujian dilanjutkan', kelas: 'text-warning', ikon: 'fa-pause' },
+  gagal: { teks: 'Belum tersimpan di server. Disimpan di perangkat ini, dicoba lagi otomatis', kelas: 'text-warning', ikon: 'fa-wifi' },
+  dijeda: { teks: 'Disimpan di perangkat ini; dikirim setelah ujian dilanjutkan', kelas: 'text-warning', ikon: 'fa-pause' },
   terlambat: { teks: 'Terkirim setelah waktu habis; guru yang memutuskan', kelas: 'text-warning', ikon: 'fa-clock' },
   bentrok: { teks: 'Pilih teks yang dipakai', kelas: 'text-error', ikon: 'fa-code-compare' },
-  ditolak: { teks: 'Belum terkirim, disimpan di laptop', kelas: 'text-warning', ikon: 'fa-triangle-exclamation' },
+  ditolak: { teks: 'Belum terkirim, disimpan di perangkat ini', kelas: 'text-warning', ikon: 'fa-triangle-exclamation' },
 };
 
 function namaPdf(id: number | null): string {
   return props.ujian.pdf.find((p) => p.id === id)?.nama_tampil ?? 'Buku';
+}
+
+// Panel dibuka lewat tombol "Buku" → kembali ke buku & halaman terakhir yang dibaca (client/src/pdf.ts), bukan ke
+// halaman tautan soal yang pernah diklik sebelumnya.
+function alihPanelBuku(): void {
+  panelBuku.value = !panelBuku.value;
+  if (!panelBuku.value) permintaanPdf.value = null;
 }
 
 function bukaRujukan(r: SoalPeserta['rujukan'][number]): void {
@@ -102,7 +141,7 @@ watch(soal, (daftar) => {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col bg-base-200">
+  <div class="flex flex-col bg-base-200 overflow-hidden" style="height: var(--tinggi-layar, 100dvh)">
     <header class="flex flex-wrap items-center gap-3 px-4 py-2 bg-base-100 shadow z-10">
       <div class="min-w-0 flex-1">
         <p class="font-bold truncate">{{ ujian.judul }}</p>
@@ -121,13 +160,13 @@ watch(soal, (daftar) => {
         <i class="fa-solid" :class="tertunda ? 'fa-arrows-rotate' : 'fa-cloud'" aria-hidden="true"></i>
         {{ tertunda ? `${tertunda} jawaban belum tersimpan` : 'Semua jawaban tersimpan' }}
       </p>
-      <button v-if="!layarPenuh" class="btn btn-sm" type="button" @click="masukLayarPenuh">
+      <button v-if="!layarPenuh && !ringkas" class="btn btn-sm" type="button" @click="masukLayarPenuh">
         <i class="fa-solid fa-expand" aria-hidden="true"></i> Layar penuh
       </button>
-      <button v-if="ujian.pdf.length" class="btn btn-sm" :class="{ 'btn-active': panelBuku }" type="button" @click="panelBuku = !panelBuku">
+      <button v-if="ujian.pdf.length && !ringkas" class="btn btn-sm" :class="{ 'btn-active': panelBuku }" type="button" @click="alihPanelBuku">
         <i class="fa-solid fa-book-open" aria-hidden="true"></i> Buku
       </button>
-      <button class="btn btn-sm btn-primary" type="button" :disabled="mengumpulkan || kunci !== null" @click="konfirmasi = true">
+      <button v-show="!ringkas" class="btn btn-sm btn-primary" type="button" :disabled="mengumpulkan || kunci !== null" @click="konfirmasi = true">
         <i class="fa-solid fa-paper-plane" aria-hidden="true"></i> Kumpulkan
       </button>
     </header>
@@ -141,8 +180,8 @@ watch(soal, (daftar) => {
       <span>{{ galatKumpul }}</span>
     </div>
 
-    <div class="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 p-3">
-      <nav class="lg:w-20 shrink-0 flex lg:flex-col gap-2 overflow-auto" aria-label="Daftar soal">
+    <div class="flex-1 min-h-0 flex flex-col lg:flex-row gap-3" :class="ringkas ? 'p-2' : 'p-3'">
+      <nav v-show="!ringkas" class="lg:w-20 shrink-0 flex lg:flex-col gap-2 overflow-auto" aria-label="Daftar soal">
         <button
           v-for="(s, i) in soal"
           :key="s.id"
@@ -160,7 +199,7 @@ watch(soal, (daftar) => {
       </nav>
 
       <main v-if="aktif" class="flex-1 min-w-0 min-h-0 flex flex-col gap-2">
-        <article class="card bg-base-100 shadow max-h-[40%] overflow-auto shrink-0">
+        <article class="card bg-base-100 shadow overflow-auto shrink-0" :class="ringkas ? 'max-h-[25%]' : 'max-h-[40%]'">
           <div class="card-body gap-2 py-4">
             <h2 class="font-semibold break-words">
               Soal {{ nomorAktif + 1 }} dari {{ soal.length }}: {{ aktif.judul }}
@@ -176,7 +215,7 @@ watch(soal, (daftar) => {
           </div>
         </article>
 
-        <div class="flex-1 min-h-40 flex flex-col">
+        <div class="flex-1 flex flex-col" :class="ringkas ? 'min-h-24' : 'min-h-40'">
           <label :for="`jawaban-${aktif.id}`" class="sr-only">Jawaban soal {{ nomorAktif + 1 }}</label>
           <textarea
             :id="`jawaban-${aktif.id}`"
@@ -193,6 +232,8 @@ watch(soal, (daftar) => {
             autocapitalize="sentences"
             writingsuggestions="false"
             @input="ketik"
+            @focus="saatFokusJawaban"
+            @blur="saatBlurJawaban"
           ></textarea>
         </div>
 
@@ -216,7 +257,7 @@ watch(soal, (daftar) => {
         </div>
       </main>
 
-      <aside v-if="panelBuku && ujian.pdf.length" class="lg:w-[45%] h-[60vh] lg:h-auto min-h-0 shrink-0">
+      <aside v-if="panelBuku && ujian.pdf.length" v-show="!ringkas" class="lg:w-[45%] h-[60vh] lg:h-auto min-h-0 shrink-0">
         <PembacaPdf :daftar="ujian.pdf" :permintaan="permintaanPdf" />
       </aside>
     </div>

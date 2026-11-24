@@ -240,7 +240,8 @@ export function muatProyektor(k: Konteks, ujianId: number): ProyektorData | null
   return {
     judul: info.judul,
     status: info.status,
-    kode: info.status === 'menunggu' ? info.kode : null,
+    // Saat menunggu & selama ujian (permintaan pemilik 24 Nov: siswa yang terlambat masuk bisa melihatnya).
+    kode: ['menunggu', 'berlangsung', 'dijeda'].includes(info.status) ? info.kode : null,
     waktu: u.dimulai_at !== null ? waktuPeserta(u, { perpanjangan_ms: 0 }, t) : null,
     hadir: peserta.filter((p) => p.status !== 'belum_masuk').length,
     total: peserta.length,

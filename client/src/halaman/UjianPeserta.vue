@@ -16,7 +16,7 @@
   layar dijaga tetap menyala (Screen Wake Lock).
 -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { GalatSchema, PesertaSayaSchema } from '../../../shared/auth.ts';
 import type { PesertaSaya } from '../../../shared/auth.ts';
@@ -27,7 +27,7 @@ import { api, GalatApi, pesanGalat } from '../api.ts';
 import { buatAutosave } from '../autosave.ts';
 import { buatPencatat } from '../integritas.ts';
 import type { HasilLapor, Pencatat, Sinyal } from '../integritas.ts';
-import { layarPenuh, layarPenuhDidukung, masukLayarPenuh } from '../layar-penuh.ts';
+import { keluarLayarPenuh, layarPenuh, layarPenuhDidukung, masukLayarPenuh } from '../layar-penuh.ts';
 import { buatHimpunanSalin } from '../tempel.ts';
 import type { HimpunanSalin } from '../tempel.ts';
 import type { Autosave, Bentrok, HasilKirim, Kiriman, Penyimpanan } from '../autosave.ts';
@@ -375,7 +375,7 @@ function sesiBerakhir(alasan: AlasanSesiDicabut | 'berakhir'): void {
 }
 
 const PESAN_SESI: Record<AlasanSesiDicabut | 'berakhir', string> = {
-  diambil_alih: 'Namamu baru saja dipakai masuk dari laptop atau browser lain. Bila itu bukan kamu, beri tahu guru.',
+  diambil_alih: 'Namamu baru saja dipakai masuk dari perangkat atau browser lain. Bila itu bukan kamu, beri tahu guru.',
   direset_penguji: 'Guru mereset PIN-mu. Masuk lagi dan buat PIN baru.',
   keluar: 'Kamu sudah keluar dari ujian.',
   dihapus_penguji: 'Namamu atau ujian ini dihapus dari daftar oleh guru. Tanyakan ke guru.',
@@ -390,6 +390,9 @@ const peringatan = ref<{ durasiMs: number; jenis: JenisKepergian } | null>(null)
 const tempelDiblokir = ref(false);
 let pewaktuTempel: ReturnType<typeof setTimeout> | undefined;
 const layarPenuhDitolak = ref(false);
+// F11 saat layar penuh: tanya dulu (permintaan pemilik 24 Nov), bukan langsung keluar.
+const tanyaKeluarLayarPenuh = ref(false);
+const tombolTetapPenuh = ref<HTMLButtonElement | null>(null);
 
 // `tabDiklaim` (let biasa) dipakai autosave; versi ref ini agar computed di bawah ikut berubah.
 const tabDiklaimRef = ref(false);
@@ -490,6 +493,20 @@ function saatFokus(): void {
 }
 function saatLayarPenuh(): void {
   kirimSinyal(document.fullscreenElement ? 'masuk_layar_penuh' : 'keluar_layar_penuh');
+  if (!document.fullscreenElement) tanyaKeluarLayarPenuh.value = false;
+}
+// F11 ditahan selama mengerjakan di layar penuh; siswa memilih di modal. Bila browser tidak mengirim F11 ke halaman,
+// layar penuh langsung keluar seperti biasa dan tetap tercatat.
+function saatTombol(e: KeyboardEvent): void {
+  if (e.key !== 'F11' || !document.fullscreenElement || !integritasAktif.value) return;
+  e.preventDefault();
+  e.stopPropagation();
+  tanyaKeluarLayarPenuh.value = true;
+  void nextTick(() => tombolTetapPenuh.value?.focus());
+}
+async function pilihKeluarLayarPenuh(keluar: boolean): Promise<void> {
+  tanyaKeluarLayarPenuh.value = false;
+  if (keluar) await keluarLayarPenuh();
 }
 
 function teksTerpilih(target: EventTarget | null): { teks: string; dariEditor: boolean } {
@@ -542,6 +559,7 @@ function pasangPendengarIntegritas(): void {
   window.addEventListener('blur', saatBlur);
   window.addEventListener('focus', saatFokus);
   document.addEventListener('fullscreenchange', saatLayarPenuh);
+  window.addEventListener('keydown', saatTombol, true);
   // Fase tangkap (capture): diproses sebelum elemen lain sempat menghentikannya.
   document.addEventListener('copy', saatSalin, true);
   document.addEventListener('cut', saatSalin, true);
@@ -554,6 +572,7 @@ function lepasPendengarIntegritas(): void {
   window.removeEventListener('blur', saatBlur);
   window.removeEventListener('focus', saatFokus);
   document.removeEventListener('fullscreenchange', saatLayarPenuh);
+  window.removeEventListener('keydown', saatTombol, true);
   document.removeEventListener('copy', saatSalin, true);
   document.removeEventListener('cut', saatSalin, true);
   document.removeEventListener('dragstart', saatSeret, true);
@@ -760,7 +779,7 @@ async function ulangiMuat(): Promise<void> {
             <div v-if="tertundaDiLaptop" role="alert" class="alert alert-warning">
               <span class="loading loading-spinner loading-sm"></span>
               <span>
-                {{ tertundaDiLaptop }} teks jawaban belum sampai ke server dan sedang dikirim. Jangan tutup laptop
+                {{ tertundaDiLaptop }} teks jawaban belum sampai ke server dan sedang dikirim. Jangan tutup halaman ini
                 sebelum pesan ini hilang; bila tidak hilang juga, beri tahu guru.
               </span>
             </div>
@@ -770,8 +789,8 @@ async function ulangiMuat(): Promise<void> {
             </p>
             <p v-if="tertahanDiLaptop" class="text-sm text-warning">
               <i class="fa-solid fa-laptop" aria-hidden="true"></i>
-              Ada {{ tertahanDiLaptop }} teks jawaban yang belum sampai ke server dan masih tersimpan di laptop ini.
-              Beri tahu guru sebelum menutup laptop.
+              Ada {{ tertahanDiLaptop }} teks jawaban yang belum sampai ke server dan masih tersimpan di perangkat ini.
+              Beri tahu guru sebelum menutup halaman ini.
             </p>
             <button class="btn btn-ghost btn-sm self-start" type="button" @click="keluar">
               <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Keluar
@@ -802,6 +821,37 @@ async function ulangiMuat(): Promise<void> {
         </div>
       </div>
     </div>
+
+    <!-- Konfirmasi F11: modal tanpa animasi; pilihan aman ("Tetap layar penuh") difokuskan lebih dulu. -->
+    <dialog
+      v-if="tanyaKeluarLayarPenuh && layarPenuh && !sesiDicabut"
+      class="modal modal-open"
+      open
+      style="transition: none; animation: none"
+      aria-labelledby="judul-keluar-penuh"
+      @cancel.prevent="pilihKeluarLayarPenuh(false)"
+    >
+      <div class="modal-box max-w-md flex flex-col gap-4" style="transition: none; animation: none; transform: none">
+        <div class="flex items-start gap-3">
+          <div class="shrink-0 rounded-full size-11 flex items-center justify-center bg-warning/20 text-warning">
+            <i class="fa-solid fa-compress text-lg" aria-hidden="true"></i>
+          </div>
+          <div class="flex flex-col gap-1">
+            <h3 id="judul-keluar-penuh" class="font-bold text-lg">Yakin keluar dari layar penuh?</h3>
+            <p class="text-sm">
+              Layar penuh wajib selama ujian. Bila keluar, kotak jawaban tertutup sampai kamu kembali ke layar penuh, dan
+              aktivitas ini tercatat serta terlihat oleh pengawas.
+            </p>
+          </div>
+        </div>
+        <div class="modal-action mt-0">
+          <button class="btn btn-ghost" type="button" @click="pilihKeluarLayarPenuh(true)">Ya, keluar</button>
+          <button ref="tombolTetapPenuh" class="btn btn-primary" type="button" @click="pilihKeluarLayarPenuh(false)">
+            <i class="fa-solid fa-expand" aria-hidden="true"></i> Tetap layar penuh
+          </button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog v-if="peringatan && !sesiDicabut && !perluLayarPenuh" class="modal modal-open" open aria-labelledby="judul-peringatan">
       <div class="modal-box">

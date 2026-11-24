@@ -33,7 +33,7 @@ defineEmits<{ keluar: [] }>();
           <p v-if="ujian.petunjuk" class="whitespace-pre-wrap break-words">{{ ujian.petunjuk }}</p>
           <ul class="text-sm list-disc ml-5 text-base-content/80">
             <li>Selama ujian, jangan membuka tab atau jendela lain. Aktivitas di luar halaman tercatat.</li>
-            <li>Jawaban tersimpan otomatis, juga di laptop ini bila Wi-Fi sempat putus.</li>
+            <li>Jawaban tersimpan otomatis, juga di perangkat ini bila Wi-Fi sempat putus.</li>
             <li v-if="ujian.pdf.length">Buku boleh dibaca dari sekarang.</li>
           </ul>
           <button v-if="!layarPenuh" class="btn btn-primary" type="button" @click="masukLayarPenuh">

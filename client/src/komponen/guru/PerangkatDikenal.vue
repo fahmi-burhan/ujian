@@ -10,6 +10,7 @@ import { ref } from 'vue';
 import { DaftarPerangkatGuruSchema } from '../../../../shared/pantau.ts';
 import type { PerangkatGuru } from '../../../../shared/pantau.ts';
 import { api, pesanGalat } from '../../api.ts';
+import { konfirmasi } from '../../konfirmasi.ts';
 import { waktuWib } from '../../label.ts';
 
 const terbuka = ref(false);
@@ -31,10 +32,19 @@ async function buka(): Promise<void> {
 }
 
 async function lupakan(p: PerangkatGuru): Promise<void> {
-  const pesan = p.ini
-    ? 'Lupakan browser ini? Login berikutnya dari browser ini lewat antrean biasa (bisa lebih lambat saat banyak percobaan login).'
-    : `Lupakan perangkat "${p.info_perangkat || 'tanpa nama'}"?`;
-  if (!window.confirm(pesan)) return;
+  const ok = await konfirmasi({
+    judul: p.ini ? 'Lupakan browser ini?' : 'Lupakan perangkat ini?',
+    subjek: p.info_perangkat || 'tanpa nama',
+    rincian: [
+      p.ini
+        ? 'Login berikutnya dari browser ini lewat antrean biasa (bisa lebih lambat saat banyak percobaan login).'
+        : 'Perangkat itu tidak lagi dikenali; login berikutnya darinya lewat antrean biasa.',
+    ],
+    labelOk: 'Lupakan',
+    ikon: 'laptop',
+    warna: 'warning',
+  });
+  if (!ok) return;
   try {
     await api('DELETE', `/api/penguji/masuk/perangkat/${p.id}`);
   } catch (e) {

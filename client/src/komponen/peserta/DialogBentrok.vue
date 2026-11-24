@@ -20,14 +20,14 @@ defineEmits<{ pilih: [pilihan: 'server' | 'laptop'] }>();
         Ada dua versi jawaban untuk "{{ judulSoal }}"
       </h3>
       <p class="text-sm text-base-content/70 my-2">
-        Teks di laptop ini berbeda dengan yang tersimpan di server. Pilih teks yang ingin kamu pakai. Teks yang
+        Teks di perangkat ini berbeda dengan yang tersimpan di server. Pilih teks yang ingin kamu pakai. Teks yang
         dipilih bisa diubah lagi setelahnya.
       </p>
       <div class="grid gap-3 md:grid-cols-2">
         <section class="border border-base-300 rounded-box p-3 flex flex-col gap-2">
-          <h4 class="font-semibold"><i class="fa-solid fa-laptop" aria-hidden="true"></i> Di laptop ini</h4>
+          <h4 class="font-semibold"><i class="fa-solid fa-laptop" aria-hidden="true"></i> Di perangkat ini</h4>
           <p class="whitespace-pre-wrap break-words max-h-64 overflow-auto text-sm bg-base-200 rounded p-2">{{ bentrok.laptop.isi || '(kosong)' }}</p>
-          <button type="button" class="btn btn-primary btn-sm" @click="$emit('pilih', 'laptop')">Pakai teks laptop ini</button>
+          <button type="button" class="btn btn-primary btn-sm" @click="$emit('pilih', 'laptop')">Pakai teks perangkat ini</button>
         </section>
         <section class="border border-base-300 rounded-box p-3 flex flex-col gap-2">
           <h4 class="font-semibold"><i class="fa-solid fa-server" aria-hidden="true"></i> Tersimpan di server</h4>

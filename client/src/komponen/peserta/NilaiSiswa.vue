@@ -11,6 +11,7 @@ import { onMounted, ref } from 'vue';
 import { angka, NilaiPesertaSchema } from '../../../../shared/nilai.ts';
 import type { NilaiPeserta } from '../../../../shared/nilai.ts';
 import { api, pesanGalat } from '../../api.ts';
+import { pecahCatatan } from '../../catatan.ts';
 
 const data = ref<NilaiPeserta | null>(null);
 const galat = ref('');
@@ -62,9 +63,16 @@ onMounted(async () => {
               <span v-if="k.deskriptor" class="text-base-content/70"> · {{ k.deskriptor }}</span>
             </li>
           </ul>
-          <div v-if="s.catatan" class="alert alert-info text-sm py-2">
-            <i class="fa-solid fa-comment" aria-hidden="true"></i>
-            <span class="whitespace-pre-wrap break-words">{{ s.catatan }}</span>
+          <!-- Catatan guru dalam satu kotak; bagian berjudul (Umum, per kriteria) judulnya ditebalkan. -->
+          <div v-if="s.catatan.trim()" class="rounded-box bg-info/10 border border-info/30 p-3 text-sm flex gap-3">
+            <i class="fa-solid fa-comment text-info mt-0.5" aria-hidden="true"></i>
+            <div class="flex flex-col gap-2 min-w-0">
+              <p class="text-xs font-medium text-base-content/60">Catatan guru</p>
+              <div v-for="(b, i) in pecahCatatan(s.catatan)" :key="i">
+                <p v-if="b.judul" class="font-semibold">{{ b.judul }}</p>
+                <p class="whitespace-pre-wrap break-words">{{ b.isi }}</p>
+              </div>
+            </div>
           </div>
           <details class="text-sm">
             <summary class="cursor-pointer link">Lihat jawaban acuan</summary>

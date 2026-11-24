@@ -399,7 +399,7 @@ async function cabutProyektor(): Promise<void> {
                 <i class="fa-solid" :class="data.ujian.status === 'dijeda' ? 'fa-pause' : 'fa-clock'" aria-hidden="true"></i>
                 {{ formatSisa(sisaGlobal) }}
               </div>
-              <div v-else-if="data.ujian.status === 'menunggu'" class="text-lg">
+              <div v-if="['menunggu', 'berlangsung', 'dijeda'].includes(data.ujian.status)" class="text-lg">
                 Kode ujian: <span class="font-mono text-3xl font-bold tracking-widest">{{ data.ujian.kode }}</span>
               </div>
               <div class="stats stats-horizontal shadow-sm bg-base-200">

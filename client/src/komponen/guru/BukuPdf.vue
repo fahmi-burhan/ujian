@@ -10,6 +10,7 @@ import { computed, ref } from 'vue';
 import { BATAS, PdfInfoSchema } from '../../../../shared/ujian.ts';
 import type { UjianDetail } from '../../../../shared/ujian.ts';
 import { api, pesanGalat } from '../../api.ts';
+import { konfirmasi } from '../../konfirmasi.ts';
 import { ukuranMb, waktuWib } from '../../label.ts';
 
 const props = defineProps<{ ujian: UjianDetail }>();
@@ -50,8 +51,16 @@ async function unggah(): Promise<void> {
 
 async function hapus(pdfId: number, nama: string): Promise<void> {
   const n = dirujuk(pdfId);
-  const tambahan = n > 0 ? ` Rujukan di ${n} soal ikut dikosongkan.` : '';
-  if (!window.confirm(`Hapus PDF "${nama}"?${tambahan}`)) return;
+  const ok = await konfirmasi({
+    judul: 'Hapus buku PDF ini?',
+    subjek: nama,
+    rincian: [
+      'Berkas PDF dihapus dari server dan tidak bisa dibuka siswa lagi.',
+      ...(n > 0 ? [`Tautan rujukan ke buku ini di ${n} soal ikut dihapus (soalnya tetap ada).`] : []),
+    ],
+    labelOk: 'Hapus PDF',
+  });
+  if (!ok) return;
   galat.value = '';
   try {
     await api('DELETE', `/api/ujian/${props.ujian.id}/pdf/${pdfId}`);

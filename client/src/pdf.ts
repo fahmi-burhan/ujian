@@ -15,6 +15,27 @@ GlobalWorkerOptions.workerSrc = urlWorker;
 
 const cache = new Map<number, Promise<PDFDocumentProxy>>();
 
+// Posisi baca per buku (halaman & zoom) dan buku yang terakhir dibuka, selama halaman ujian terbuka. Disimpan di
+// modul (bukan di komponen), karena panel buku dilepas saat ditutup: saat dibuka lagi atau saat siswa kembali ke
+// buku sebelumnya, ia mendarat di halaman terakhir yang dibacanya (permintaan pemilik 24 Nov).
+export type PosisiBuku = { halaman: number; zoom: number };
+const posisi = new Map<number, PosisiBuku>();
+let bukuTerakhir: number | null = null;
+
+export function ingatPosisi(pdfId: number, p: Partial<PosisiBuku>): void {
+  const lama = posisi.get(pdfId) ?? { halaman: 1, zoom: 1 };
+  posisi.set(pdfId, { ...lama, ...p });
+  bukuTerakhir = pdfId;
+}
+
+export function posisiBuku(pdfId: number): PosisiBuku | null {
+  return posisi.get(pdfId) ?? null;
+}
+
+export function bukaTerakhir(): number | null {
+  return bukuTerakhir;
+}
+
 // PDF dimuat bertahap lewat HTTP Range, lalu sisanya diunduh di latar belakang (disableAutoFetch: false),
 // sehingga buku sudah utuh di memori sejak ruang tunggu dan tidak ada lonjakan unduhan saat Mulai.
 // Hasilnya disimpan di memori halaman (server mengirim no-store, jadi tidak tertinggal di laptop bersama).

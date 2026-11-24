@@ -11,6 +11,7 @@ import { pesertaDariCsv } from '../../../../shared/csv.ts';
 import { BATAS, DaftarPesertaGuruSchema, ImporHasilSchema, PesertaGuruSchema } from '../../../../shared/ujian.ts';
 import type { ImporHasil, PesertaGuru, UjianDetail } from '../../../../shared/ujian.ts';
 import { api, pesanGalat } from '../../api.ts';
+import { konfirmasi } from '../../konfirmasi.ts';
 import { LABEL_STATUS_PESERTA } from '../../label.ts';
 
 const props = defineProps<{ ujian: UjianDetail }>();
@@ -90,12 +91,27 @@ async function simpanUbah(): Promise<void> {
 }
 
 async function hapus(p: PesertaGuru): Promise<void> {
-  if (!window.confirm(`Hapus ${p.nama} dari daftar peserta?`)) return;
+  const ok = await konfirmasi({
+    judul: 'Hapus peserta ini?',
+    subjek: p.nama,
+    rincian: ['Namanya hilang dari daftar dan PIN-nya ikut terhapus.', 'Bila perlu, ia bisa ditambahkan lagi sebagai peserta baru.'],
+    labelOk: 'Hapus peserta',
+    ikon: 'user-minus',
+  });
+  if (!ok) return;
   await coba(() => api('DELETE', `${base.value}/${p.id}`));
 }
 
 async function resetPin(p: PesertaGuru): Promise<void> {
-  if (!window.confirm(`Reset PIN ${p.nama}? Sesinya akan dikeluarkan dan ia membuat PIN baru saat masuk.`)) return;
+  const ok = await konfirmasi({
+    judul: 'Reset PIN peserta ini?',
+    subjek: p.nama,
+    rincian: ['Ia langsung dikeluarkan dari halaman ujian.', 'Saat masuk lagi, ia membuat PIN baru. Jawabannya tetap aman.'],
+    labelOk: 'Reset PIN',
+    ikon: 'key',
+    warna: 'warning',
+  });
+  if (!ok) return;
   await coba(() => api('POST', `${base.value}/${p.id}/reset-pin`));
 }
 

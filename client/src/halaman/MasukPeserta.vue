@@ -1,6 +1,7 @@
 <!--
   client/src/halaman/MasukPeserta.vue — halaman masuk siswa (alamat "/"), tiga langkah:
-    1. ketik kode ujian (tampil di layar depan),
+    1. ketik kode ujian (tampil di layar depan), atau pindai QR di layar proyektor: alamatnya "/?kode=XXXXXX", kode
+       langsung diisi & dicek lalu dihapus dari alamat,
     2. pilih nama sendiri dari daftar,
     3. buat PIN 4 angka (pertama kali, diketik dua kali) atau ketik PIN yang sudah dibuat.
   Dipanggil oleh: client/src/router.ts.
@@ -8,8 +9,8 @@
   Semua teks netral & ramah: siswa yang namanya "sudah dipakai" diarahkan meminta bantuan guru.
 -->
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { DaftarNamaResponsSchema } from '../../../shared/auth.ts';
 import type { DaftarNamaRespons } from '../../../shared/auth.ts';
 import { PANJANG_KODE_UJIAN, rapikanKode } from '../../../shared/alfabet.ts';
@@ -20,6 +21,7 @@ type Langkah = 'kode' | 'nama' | 'pin';
 type PesertaPilihan = DaftarNamaRespons['peserta'][number];
 
 const router = useRouter();
+const route = useRoute();
 const langkah = ref<Langkah>('kode');
 const kode = ref('');
 const daftar = ref<DaftarNamaRespons | null>(null);
@@ -59,6 +61,15 @@ async function cekKode(): Promise<void> {
     memuat.value = false;
   }
 }
+
+// Datang dari QR proyektor: kode diisi otomatis lalu langsung dicek (siswa tinggal memilih nama).
+onMounted(async () => {
+  const dariAlamat = route.query.kode;
+  if (typeof dariAlamat !== 'string' || dariAlamat === '') return;
+  await router.replace({ path: '/', query: {} });
+  kode.value = dariAlamat;
+  if (kodeRapi.value.length === PANJANG_KODE_UJIAN) await cekKode();
+});
 
 async function pilihNama(peserta: PesertaPilihan): Promise<void> {
   dipilih.value = peserta;

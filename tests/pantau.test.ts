@@ -240,7 +240,7 @@ describe('dasbor guru & proyektor', () => {
     aliranSiswa.tutup();
   });
 
-  test('proyektor: daftar putih, tanpa upaya tempel & event "wajar", mode inisial, kode hanya saat menunggu', async () => {
+  test('proyektor: daftar putih, tanpa upaya tempel & event "wajar", mode inisial, kode saat menunggu & berlangsung', async () => {
     const kodeR = await guru.minta('POST', '/api/ujian/1/tautan-proyektor');
     const proyektor = a.klien();
     assert.equal((await proyektor.minta('POST', '/api/proyektor/masuk', { body: { kode: (kodeR.body as { kode: string }).kode } })).status, 204);
@@ -264,7 +264,7 @@ describe('dasbor guru & proyektor', () => {
     for (let i = 3; d.status !== 'berlangsung' || d.terbaru.length !== 1 || d.peserta.every((p) => p.label !== 'B. S.'); i++) {
       d = ProyektorDataSchema.parse(await aliran.tunggu('proyektor', i));
     }
-    assert.equal(d.kode, null);
+    assert.equal(d.kode, 'ABC234', 'kode tetap tampil selama ujian untuk siswa yang terlambat');
     assert.equal(d.hadir, 1);
     const budiP = d.peserta.find((p) => p.label === 'B. S.');
     assert.deepEqual(budiP?.aktivitas, { tab_tersembunyi: { kali: 1, total_ms: 15_000 } });

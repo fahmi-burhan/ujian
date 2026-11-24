@@ -9,6 +9,7 @@ import { computed, ref } from 'vue';
 import { BATAS, masalahRubrik } from '../../../../shared/ujian.ts';
 import type { SoalGuru, UjianDetail } from '../../../../shared/ujian.ts';
 import { api, pesanGalat } from '../../api.ts';
+import { konfirmasi } from '../../konfirmasi.ts';
 import EditorSoal from './EditorSoal.vue';
 
 const props = defineProps<{ ujian: UjianDetail }>();
@@ -53,7 +54,13 @@ async function geser(i: number, arah: -1 | 1): Promise<void> {
 }
 
 async function hapus(s: SoalGuru): Promise<void> {
-  if (!window.confirm(`Hapus soal ${s.urutan} "${s.judul}" beserta rubriknya?`)) return;
+  const ok = await konfirmasi({
+    judul: `Hapus soal ${s.urutan}?`,
+    subjek: s.judul,
+    rincian: ['Teks soal, rubrik, jawaban acuan, dan rujukan bukunya ikut terhapus.', 'Nomor soal sesudahnya bergeser naik.'],
+    labelOk: 'Hapus soal',
+  });
+  if (!ok) return;
   galat.value = '';
   try {
     await api('DELETE', `/api/ujian/${props.ujian.id}/soal/${s.id}`);

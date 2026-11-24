@@ -20,6 +20,7 @@ import { angka, masalahSkor, NilaiJawabanSchema, SetujuiSemuaSchema, nilaiSoal, 
 import type { PenilaianGuru, Skor } from '../../../shared/nilai.ts';
 import type { SoalGuru } from '../../../shared/ujian.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import { konfirmasi } from '../konfirmasi.ts';
 import KepalaGuru from '../komponen/guru/KepalaGuru.vue';
 import { LABEL_STATUS_UJIAN, waktuWib, WARNA_STATUS_UJIAN } from '../label.ts';
 
@@ -86,8 +87,16 @@ function saatTutup(e: BeforeUnloadEvent): void {
 }
 window.addEventListener('beforeunload', saatTutup);
 onBeforeUnmount(() => window.removeEventListener('beforeunload', saatTutup));
-onBeforeRouteLeave(() =>
-  jumlahKotor.value === 0 || window.confirm(`${jumlahKotor.value} nilai belum disimpan dan akan hilang. Tetap tinggalkan halaman?`),
+onBeforeRouteLeave(
+  () =>
+    jumlahKotor.value === 0 ||
+    konfirmasi({
+      judul: 'Tinggalkan halaman penilaian?',
+      rincian: [`${jumlahKotor.value} nilai belum disimpan dan akan hilang.`],
+      labelOk: 'Tinggalkan',
+      ikon: 'right-from-bracket',
+      warna: 'warning',
+    }),
 );
 
 // Penanda urutan: respons muat() yang dimulai SEBELUM simpanan terakhir guru (atau disusul muat() yang lebih baru)
@@ -118,6 +127,11 @@ watch(id, () => void muat(), { immediate: true });
 const statusAi = ref<StatusAi | null>(null);
 const modelAi = ref<ModelAi>('claude-haiku-5-5');
 const modelDipilih = ref(false);
+// Nilai ulang: draf AI yang belum disentuh guru ikut dinilai lagi (mis. untuk mencoba model lain). Draf yang pernah
+// ditandai berisi instruksi untuk penilai tidak ikut (server).
+const ulangAi = ref(false);
+const jumlahTargetAi = computed(() => (statusAi.value ? statusAi.value.belum_dinilai + (ulangAi.value ? statusAi.value.draf_ai : 0) : 0));
+const perkiraanAi = computed(() => (ulangAi.value ? statusAi.value?.perkiraan_ulang_usd : statusAi.value?.perkiraan_usd)?.[modelAi.value] ?? 0);
 let pemantauAi: ReturnType<typeof setInterval> | null = null;
 const aiBerjalan = computed(() => statusAi.value?.run?.status === 'berjalan');
 const saranMap = computed(() => new Map((data.value?.saran_ai ?? []).map((s) => [kunci(s.peserta_id, s.soal_id), s])));
@@ -137,6 +151,7 @@ async function muatAi(): Promise<void> {
   try {
     statusAi.value = await api('GET', `/api/ujian/${id.value}/ai`, { skema: StatusAiSchema });
     if (!modelDipilih.value) modelAi.value = statusAi.value.model_bawaan;
+    if (statusAi.value.draf_ai === 0) ulangAi.value = false;
   } catch {
     // Panel AI sekadar tidak tampil; penilaian manual tidak terganggu.
   }
@@ -174,7 +189,8 @@ const ALASAN_BERHENTI: Record<string, string> = {
 
 const mulaiAi = () =>
   jalankan(async () => {
-    await api('POST', `/api/ujian/${id.value}/ai/mulai`, { body: { model: modelAi.value } });
+    await api('POST', `/api/ujian/${id.value}/ai/mulai`, { body: { model: modelAi.value, ulang: ulangAi.value } });
+    ulangAi.value = false;
     await muatAi();
   }, 'AI mulai menilai. Draf muncul bertahap; periksa lalu setujui seperti biasa.');
 const hentikanAi = () =>
@@ -401,21 +417,33 @@ function nilaiAkhir(pid: number): string {
                       <option v-for="m in statusAi.model" :key="m.id" :value="m.id">{{ m.nama }} | {{ m.keterangan }}</option>
                     </select>
                   </label>
-                  <button type="button" class="btn btn-sm btn-primary" :disabled="sibuk || statusAi.belum_dinilai === 0" @click="mulaiAi">
-                    <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Nilai {{ statusAi.belum_dinilai }} jawaban dengan AI
+                  <button type="button" class="btn btn-sm btn-primary" :disabled="sibuk || jumlahTargetAi === 0" @click="mulaiAi">
+                    <i class="fa-solid" :class="ulangAi ? 'fa-rotate' : 'fa-wand-magic-sparkles'" aria-hidden="true"></i>
+                    Nilai {{ jumlahTargetAi }} jawaban dengan AI
                   </button>
                 </div>
+                <label v-if="statusAi.draf_ai > 0" class="flex items-start gap-2 text-sm cursor-pointer">
+                  <input v-model="ulangAi" type="checkbox" class="checkbox checkbox-sm mt-0.5" />
+                  <span>
+                    Nilai ulang juga <strong>{{ statusAi.draf_ai }} draf AI</strong> yang belum Anda ubah atau setujui (misalnya untuk mencoba
+                    model lain). Draf lamanya diganti hasil baru. Nilai yang sudah Anda simpan atau setujui, dan draf yang ditandai berisi
+                    instruksi untuk penilai, tidak disentuh.
+                  </span>
+                </label>
                 <p class="text-sm">
-                  Perkiraan biaya (kasar): <strong>{{ usdTeks(statusAi.perkiraan_usd[modelAi] ?? 0) }}</strong> · terpakai bulan ini
+                  Perkiraan biaya (kasar): <strong>{{ usdTeks(perkiraanAi) }}</strong> · terpakai bulan ini
                   {{ usdTeks(statusAi.terpakai_usd_bulan_ini) }} dari batas {{ usdTeks(statusAi.batas_usd_bulanan) }}
                 </p>
                 <p
-                  v-if="(statusAi.perkiraan_usd[modelAi] ?? 0) > statusAi.batas_usd_bulanan - statusAi.terpakai_usd_bulan_ini"
+                  v-if="perkiraanAi > statusAi.batas_usd_bulanan - statusAi.terpakai_usd_bulan_ini"
                   class="text-sm text-warning"
                 >
                   Perkiraan melebihi sisa batas bulan ini. AI berhenti sendiri saat batas tercapai, dan sisanya dinilai manual.
                 </p>
-                <p v-if="statusAi.belum_dinilai === 0" class="text-sm text-base-content/60">Semua jawaban sudah punya nilai atau draf.</p>
+                <p v-if="statusAi.belum_dinilai === 0 && statusAi.draf_ai === 0" class="text-sm text-base-content/60">Semua jawaban sudah punya nilai.</p>
+                <p v-else-if="statusAi.belum_dinilai === 0 && !ulangAi" class="text-sm text-base-content/60">
+                  Semua jawaban sudah punya nilai atau draf. Centang "Nilai ulang" untuk menilai lagi draf AI.
+                </p>
               </template>
             </template>
           </div>
@@ -478,7 +506,8 @@ function nilaiAkhir(pid: number): string {
                   <span v-if="kotorDiSoal(soalAktif.id)" class="text-sm text-error">
                     {{ kotorDiSoal(soalAktif.id) }} nilai di soal ini belum disimpan. Simpan dulu (draf atau setujui).
                   </span>
-                  <button type="button" class="btn btn-sm" :disabled="sibuk || kotorDiSoal(soalAktif.id) > 0" @click="setujuiSemua(soalAktif)">
+                  <span v-if="aiBerjalan" class="text-sm text-base-content/60">Tunggu AI selesai menilai sebelum menyetujui semua.</span>
+                  <button type="button" class="btn btn-sm" :disabled="sibuk || aiBerjalan || kotorDiSoal(soalAktif.id) > 0" @click="setujuiSemua(soalAktif)">
                     <i class="fa-solid fa-check-double" aria-hidden="true"></i> Setujui semua draf soal ini
                   </button>
                 </div>
@@ -540,9 +569,12 @@ function nilaiAkhir(pid: number): string {
                     </div>
                     <label class="flex flex-col gap-1">
                       <span class="text-sm">Catatan untuk siswa (opsional, terlihat setelah rilis)</span>
+                      <span class="text-xs text-base-content/60">
+                        Baris berakhiran titik dua (mis. "Umum:") tampil tebal sebagai judul bagian di halaman nilai siswa.
+                      </span>
                       <textarea
                         :value="isianDari(p.id, soalAktif.id).catatan"
-                        class="textarea w-full h-16"
+                        class="textarea w-full min-h-16 [field-sizing:content] max-h-80"
                         maxlength="2000"
                         @input="ubahCatatan(p.id, soalAktif.id, ($event.target as HTMLTextAreaElement).value)"
                       ></textarea>

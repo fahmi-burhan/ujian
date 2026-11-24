@@ -12,7 +12,7 @@ import type { StatusAi } from '../shared/ai.ts';
 import { NilaiPesertaSchema, PenilaianGuruSchema } from '../shared/nilai.ts';
 import type { AdapterAi, JawabanAi, PermintaanAi } from '../server/ai/adapter.ts';
 import { GalatAi } from '../server/ai/adapter.ts';
-import { bungkusJawaban, netralkanJawaban, normalisasiBukti, periksaKeluaran } from '../server/ai/prompt.ts';
+import { bungkusJawaban, netralkanJawaban, normalisasiBukti, periksaKeluaran, susunCatatan } from '../server/ai/prompt.ts';
 import { isiDataAwal, mulaiAplikasiUji, PASSWORD_GURU, T0 } from './bantuan.ts';
 import type { AplikasiUji, Klien } from './bantuan.ts';
 
@@ -44,14 +44,14 @@ function tiruan(penjawab: Penjawab): Tiruan {
 }
 
 const PAKAI = { masuk: 1000, tulisCache: 0, bacaCache: 0, keluar: 500 };
-function keluaran(k1: [number, string[]], k2: [number, string[]], indikasi = false): JawabanAi {
+function keluaran(k1: [number, string[]], k2: [number, string[]], indikasi = false, catatanUmum = 'Sudah baik menyebut niat; lengkapi rukun lainnya.'): JawabanAi {
   return {
     teks: JSON.stringify({
       kriteria: {
-        k1: { alasan: 'Alasan kelengkapan.', kutipan: k1[1], skor: k1[0] },
-        k2: { alasan: 'Alasan ketepatan.', kutipan: k2[1], skor: k2[0] },
+        k1: { alasan: 'Alasan kelengkapan.', kutipan: k1[1], skor: k1[0], catatan_siswa: 'Lengkapi rukun yang lain.' },
+        k2: { alasan: 'Alasan ketepatan.', kutipan: k2[1], skor: k2[0], catatan_siswa: '' },
       },
-      catatan_siswa: 'Sudah baik menyebut niat; lengkapi rukun lainnya.',
+      catatan_umum: catatanUmum,
       indikasi_instruksi: { ada: indikasi, keterangan: indikasi ? 'Ada perintah untuk menaikkan nilai.' : '' },
     }),
     berhenti: 'selesai',
@@ -132,7 +132,8 @@ describe('alur penilaian AI', () => {
     const d = await penilaian();
     const budi = d.nilai.find((n) => n.peserta_id === 1 && n.soal_id === 11);
     assert.deepEqual(budi && { skor: budi.skor, sumber: budi.sumber, status: budi.status }, { skor: { k1: 5, k2: 4 }, sumber: 'ai', status: 'draf' });
-    assert.match(budi?.catatan ?? '', /Sudah baik/);
+    // Catatan bersekat: Umum lalu per kriteria (urut rubrik); kriteria tanpa catatan dilewati.
+    assert.equal(budi?.catatan, 'Umum:\nSudah baik menyebut niat; lengkapi rukun lainnya.\n\nKelengkapan:\nLengkapi rukun yang lain.');
     const saranAni = d.saran_ai.find((s) => s.peserta_id === 2);
     assert.equal(saranAni?.status, 'selesai');
     assert.equal(saranAni?.hasil?.indikasi_instruksi.ada, true);
@@ -205,6 +206,87 @@ describe('alur penilaian AI', () => {
     assert.equal(budi?.sumber, 'manual');
     assert.equal(budi?.catatan, 'dari guru');
     assert.equal((await mulaiAi()).status, 409, 'tidak ada lagi yang perlu dinilai');
+  });
+
+  test('nilai ulang: hanya draf AI yang belum disentuh guru & tidak bertanda yang diganti', async () => {
+    let putaran = 1;
+    const ai = tiruan((p, ke) => {
+      if (putaran === 3) return keluaran([5, ['tidak ada di jawaban sama sekali']], [0, []]);
+      const k = jawabSah(p, ke) as JawabanAi;
+      return putaran === 1 ? k : { ...k, teks: (k.teks ?? '').replace('Sudah baik menyebut niat', 'Putaran kedua') };
+    });
+    await siapkan(ai);
+    await mulaiAi();
+    await a.ai.diam();
+    // Budi: draf AI biasa. Ani: draf AI yang DITANDAI berisi instruksi → tidak pernah ikut nilai ulang.
+    const st = await statusAi();
+    assert.deepEqual([st.belum_dinilai, st.draf_ai], [0, 1]);
+    assert.ok((st.perkiraan_ulang_usd['claude-haiku-5-5'] ?? 0) > 0);
+    assert.equal((await mulaiAi()).status, 409, 'tanpa ulang: tidak ada yang perlu dinilai');
+    const aniAwal = (await penilaian()).nilai.find((n) => n.peserta_id === 2);
+
+    putaran = 2;
+    const r = await guru.minta('POST', '/api/ujian/1/ai/mulai', { body: { model: 'claude-haiku-5-5', ulang: true } });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await a.ai.diam();
+    assert.equal(ai.permintaan.length, 3, 'hanya jawaban Budi yang dikirim lagi');
+    let d = await penilaian();
+    const budi = d.nilai.find((n) => n.peserta_id === 1);
+    assert.deepEqual(budi && [budi.sumber, budi.status], ['ai', 'draf']);
+    assert.match(budi?.catatan ?? '', /Putaran kedua/);
+    assert.deepEqual(d.nilai.find((n) => n.peserta_id === 2), aniAwal, 'draf bertanda tidak disentuh');
+    assert.equal(d.saran_ai.find((x) => x.peserta_id === 2)?.hasil?.indikasi_instruksi.ada, true);
+
+    // Nilai ulang yang gagal: draf putaran 2 tetap, dan saran yang tampil tetap hasil yang menjadi sumber draf itu.
+    putaran = 3;
+    assert.equal((await guru.minta('POST', '/api/ujian/1/ai/mulai', { body: { model: 'claude-haiku-5-5', ulang: true } })).status, 202);
+    await a.ai.diam();
+    d = await penilaian();
+    assert.match(d.nilai.find((n) => n.peserta_id === 1)?.catatan ?? '', /Putaran kedua/);
+    const saranBudi = d.saran_ai.find((x) => x.peserta_id === 1);
+    assert.equal(saranBudi?.status, 'selesai');
+    assert.equal((await statusAi()).run?.jumlah.perlu_manual, 1);
+  });
+
+  test('run biasa tidak menimpa draf AI; draf yang disunting guru tidak ikut nilai ulang', async () => {
+    await siapkan(tiruan(jawabSah));
+    await mulaiAi();
+    await a.ai.diam();
+    // Meniru draf AI yang muncul di tengah run biasa: run biasa tetap tidak menimpanya.
+    a.db.prepare("UPDATE penilaian SET catatan = 'draf lama' WHERE peserta_id = 1").run();
+    a.db.prepare("INSERT INTO ai_run (ujian_id, penguji_id, model, versi_prompt, status, dibuat_at) VALUES (1, 1, 'claude-haiku-5-5', 'nilai-v2', 'berjalan', ?)").run(T0);
+    const runBiasa = a.db.prepare('SELECT MAX(id) FROM ai_run').pluck().get();
+    a.db.prepare("INSERT INTO ai_tugas (run_id, ujian_id, peserta_id, soal_id, status, diubah_at) VALUES (?, 1, 1, 11, 'menunggu', ?)").run(runBiasa, T0);
+    a.ai.pulihkan();
+    await a.ai.diam();
+    assert.equal((await penilaian()).nilai.find((n) => n.peserta_id === 1)?.catatan, 'draf lama');
+    assert.equal(a.db.prepare('SELECT status FROM ai_tugas WHERE run_id = ?').pluck().get(runBiasa), 'dibatalkan');
+    await guru.minta('PUT', '/api/ujian/1/penilaian/1/11', { body: { skor: { k1: 10, k2: 4 }, catatan: 'dari guru', setujui: false } });
+    assert.equal((await statusAi()).draf_ai, 0);
+  });
+
+  test('nilai ulang tidak menimpa draf yang disimpan guru selama permintaan berjalan', async () => {
+    let tahan: Promise<void> | null = null;
+    let lepas: () => void = () => {};
+    const ai = tiruan(async (p, ke) => {
+      if (tahan) await tahan;
+      return jawabSah(p, ke);
+    });
+    await siapkan(ai, { AI_PARALEL: '1' });
+    await mulaiAi();
+    await a.ai.diam();
+    tahan = new Promise<void>((r) => {
+      lepas = r;
+    });
+    const r = await guru.minta('POST', '/api/ujian/1/ai/mulai', { body: { model: 'claude-haiku-5-5', ulang: true } });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await new Promise((res) => setImmediate(res));
+    assert.equal(ai.permintaan.length, 3, 'permintaan ulang untuk Budi sedang berjalan');
+    await guru.minta('PUT', '/api/ujian/1/penilaian/1/11', { body: { skor: { k1: 0, k2: 0 }, catatan: 'guru', setujui: false } });
+    lepas();
+    await a.ai.diam();
+    const budi = (await penilaian()).nilai.find((n) => n.peserta_id === 1);
+    assert.deepEqual(budi && [budi.sumber, budi.catatan], ['manual', 'guru']);
   });
 
   test('hentikan oleh guru: sisa antrean dibatalkan', async () => {
@@ -385,7 +467,7 @@ describe('pengaman biaya & galat penyedia', () => {
 describe('validasi keluaran AI (aturan keras #7)', () => {
   const r = { kriteria: RUBRIK_1.kriteria, poin_wajib: [] };
   const json = (o: unknown) => JSON.stringify(o);
-  const dasar = (k1: unknown, k2: unknown) => ({ kriteria: { k1, k2 }, catatan_siswa: '', indikasi_instruksi: { ada: false, keterangan: '' } });
+  const dasar = (k1: unknown, k2: unknown) => ({ kriteria: { k1, k2 }, catatan_umum: '', indikasi_instruksi: { ada: false, keterangan: '' } });
 
   test('kutipan dicocokkan setelah normalisasi spasi, tanda kutip, huruf besar, dan tatweel Arab', () => {
     assert.equal(normalisasiBukti('  “Membasuh”\n\n MUKA '), '"membasuh" muka');
@@ -432,6 +514,22 @@ describe('validasi keluaran AI (aturan keras #7)', () => {
       asli,
     );
     assert.equal(ok.ok, true);
+  });
+
+  test('catatan siswa disusun: Umum lalu per kriteria urut rubrik; terlalu panjang ditolak (tidak dipotong)', () => {
+    assert.equal(susunCatatan(r, ' Bagus. ', { k2: 'Tepat.', k1: 'Kurang lengkap.' }), 'Umum:\nBagus.\n\nKelengkapan:\nKurang lengkap.\n\nKetepatan:\nTepat.');
+    assert.equal(susunCatatan(r, '', { k2: 'Tepat.' }), 'Ketepatan:\nTepat.');
+    const k = (c: string) => ({ alasan: 'a', kutipan: [], skor: 0, catatan_siswa: c });
+    const ok = periksaKeluaran(json({ ...dasar(k('Satu.'), k('Dua.')), catatan_umum: 'Umum.' }), r, JAWABAN_BUDI);
+    assert.equal(ok.ok && ok.hasil.catatan_siswa, 'Umum:\nUmum.\n\nKelengkapan:\nSatu.\n\nKetepatan:\nDua.');
+    const panjang = 'x'.repeat(400);
+    const r10 = { kriteria: Array.from({ length: 6 }, (_, i) => ({ ...RUBRIK_1.kriteria[0]!, id: `k${i}` })), poin_wajib: [] };
+    const lewat = periksaKeluaran(
+      json({ kriteria: Object.fromEntries(r10.kriteria.map((x) => [x.id, k(panjang)])), catatan_umum: panjang, indikasi_instruksi: { ada: false, keterangan: '' } }),
+      r10,
+      JAWABAN_BUDI,
+    );
+    assert.deepEqual(lewat, { ok: false, masalah: 'catatan untuk siswa terlalu panjang' });
   });
 
   test('kutipan terlalu pendek bukan bukti (kecuali jawabannya sendiri pendek)', () => {

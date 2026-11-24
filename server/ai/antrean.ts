@@ -11,7 +11,10 @@
 //   terpakai bulan ini + cadangan permintaan yang sedang jalan + biaya TERBURUK permintaan ini (seluruh max_tokens)
 //   tidak boleh melewati batas. Bila akan lewat, run dihentikan ("batas_biaya"); sisanya dinilai manual.
 // - Hasil yang lolos validasi ditulis ke `penilaian` sebagai sumber 'ai', status 'draf', HANYA bila jawaban itu
-//   belum punya nilai (nilai/draf guru tidak pernah ditimpa). Gagal validasi → coba ulang (maks MAKS_PERCOBAAN),
+//   belum punya nilai, atau (hanya pada run "nilai ulang", ai_run.ulang = 1, migrasi 0007) nilainya masih draf AI
+//   yang belum disentuh guru. Nilai/draf guru tidak pernah ditimpa: begitu guru menyimpan, sumbernya 'manual'.
+//   Draf yang pernah ditandai AI berisi instruksi untuk penilai tidak pernah ikut nilai ulang, supaya tandanya tidak
+//   hilang karena "dikocok ulang" sampai AI tidak lagi mendeteksinya. Gagal validasi → coba ulang (maks MAKS_PERCOBAAN),
 //   lalu 'perlu_manual'. Tidak pernah ada nilai tebakan (aturan keras #7).
 // - Log server tidak pernah memuat kunci API atau isi jawaban; hanya id tugas & pesan galat ringkas.
 import type { Db } from '../db/connection.ts';
@@ -43,7 +46,7 @@ export type LayananAi = {
   opsi: OpsiAi;
   // Membuat run + tugas untuk jawaban yang belum dinilai, lalu menjalankan antrean. Pemeriksaan syarat (status ujian,
   // run lain, batas biaya) dilakukan rute sebelum memanggil ini.
-  mulai: (ujianId: number, pengujiId: number, model: ModelAi) => number;
+  mulai: (ujianId: number, pengujiId: number, model: ModelAi, ulang?: boolean) => number;
   hentikan: (ujianId: number, alasan: string) => boolean;
   terpakaiBulanIniMikro: () => number;
   // Dipanggil sekali saat server start.
@@ -56,7 +59,9 @@ export type JawabanTarget = { peserta_id: number; soal_id: number; isi: string; 
 
 // Jawaban siswa hadir yang belum punya baris nilai (draf/disetujui, manual/AI/otomatis). Jawaban kosong sudah diberi
 // 0 saat penilaian dimulai, jadi tidak ikut. Urut per soal.
-export function jawabanBelumDinilai(db: Db, ujianId: number): JawabanTarget[] {
+// `ulang` = ikut sertakan draf AI yang belum disentuh guru (sumber 'ai', status 'draf'), KECUALI yang pernah ditandai
+// berisi instruksi untuk penilai (tanda itu harus tetap terlihat guru).
+export function jawabanBelumDinilai(db: Db, ujianId: number, ulang = false): JawabanTarget[] {
   return db
     .prepare(
       `SELECT p.id AS peserta_id, s.id AS soal_id, j.isi AS isi,
@@ -65,10 +70,15 @@ export function jawabanBelumDinilai(db: Db, ujianId: number): JawabanTarget[] {
        JOIN soal s ON s.ujian_id = p.ujian_id
        JOIN jawaban j ON j.peserta_id = p.id AND j.soal_id = s.id
        WHERE p.ujian_id = ? AND p.status = 'dikumpulkan' AND trim(j.isi) <> ''
-         AND NOT EXISTS (SELECT 1 FROM penilaian n WHERE n.peserta_id = p.id AND n.soal_id = s.id)
+         AND NOT EXISTS (
+           SELECT 1 FROM penilaian n WHERE n.peserta_id = p.id AND n.soal_id = s.id
+             AND NOT (? = 1 AND n.sumber = 'ai' AND n.status = 'draf'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM ai_tugas a WHERE a.peserta_id = n.peserta_id AND a.soal_id = n.soal_id
+                          AND a.status = 'selesai' AND json_extract(a.hasil_json, '$.indikasi_instruksi.ada') = 1)))
        ORDER BY s.urutan, s.id, p.id`,
     )
-    .all(ujianId) as JawabanTarget[];
+    .all(ujianId, ulang ? 1 : 0) as JawabanTarget[];
 }
 
 // Cadangan biaya satu permintaan (perkiraan KONSERVATIF, bukan jaminan mutlak): 1 token per karakter masukan (jauh
@@ -94,7 +104,7 @@ export function awalBulanUtc(t: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
-type BarisTugas = { id: number; run_id: number; ujian_id: number; peserta_id: number; soal_id: number; percobaan: number; model: string };
+type BarisTugas = { id: number; run_id: number; ujian_id: number; peserta_id: number; soal_id: number; percobaan: number; model: string; ulang: 0 | 1 };
 
 export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null; opsi: OpsiAi }): LayananAi {
   const { db, jam, adapter, opsi } = dep;
@@ -129,7 +139,7 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
   function ambilTugas(): BarisTugas | null {
     const t = db
       .prepare(
-        `SELECT t.id, t.run_id, t.ujian_id, t.peserta_id, t.soal_id, t.percobaan, r.model
+        `SELECT t.id, t.run_id, t.ujian_id, t.peserta_id, t.soal_id, t.percobaan, r.model, r.ulang
          FROM ai_tugas t JOIN ai_run r ON r.id = t.run_id JOIN soal s ON s.id = t.soal_id
          WHERE t.status = 'menunggu' AND r.status = 'berjalan'
          ORDER BY t.run_id, s.urutan, s.id, t.id LIMIT 1`,
@@ -174,7 +184,11 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
     const jawaban = db.prepare('SELECT isi, versi FROM jawaban WHERE peserta_id = ? AND soal_id = ?').get(t.peserta_id, t.soal_id) as
       | { isi: string; versi: number }
       | undefined;
-    const sudahDinilai = db.prepare('SELECT 1 FROM penilaian WHERE peserta_id = ? AND soal_id = ?').get(t.peserta_id, t.soal_id) !== undefined;
+    // Run nilai ulang boleh mengganti draf AI yang belum disentuh guru; nilai/draf guru tidak pernah.
+    const sudahDinilai =
+      db
+        .prepare("SELECT 1 FROM penilaian WHERE peserta_id = ? AND soal_id = ? AND NOT (? = 1 AND sumber = 'ai' AND status = 'draf')")
+        .get(t.peserta_id, t.soal_id, t.ulang) !== undefined;
     if (!model || ujian !== 'penilaian' || !soal || !jawaban || jawaban.isi.trim() === '') {
       setTugas(t.id, 'dibatalkan', 'ujian tidak lagi dalam tahap penilaian atau jawaban tidak ditemukan');
       return;
@@ -273,8 +287,11 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
       if (masihPenilaian) {
         db.prepare(
           `INSERT INTO penilaian (ujian_id, peserta_id, soal_id, skor_json, catatan, sumber, status, versi_jawaban, dinilai_at)
-           VALUES (?, ?, ?, ?, ?, 'ai', 'draf', ?, ?) ON CONFLICT (peserta_id, soal_id) DO NOTHING`,
-        ).run(t.ujian_id, t.peserta_id, t.soal_id, JSON.stringify(hasil.skor), hasil.catatan_siswa.slice(0, 2000), jawaban.versi, sekarang);
+           VALUES (?, ?, ?, ?, ?, 'ai', 'draf', ?, ?)
+           ON CONFLICT (peserta_id, soal_id) DO UPDATE SET skor_json = excluded.skor_json, catatan = excluded.catatan,
+             versi_jawaban = excluded.versi_jawaban, dinilai_at = excluded.dinilai_at
+           WHERE ? = 1 AND penilaian.sumber = 'ai' AND penilaian.status = 'draf'`,
+        ).run(t.ujian_id, t.peserta_id, t.soal_id, JSON.stringify(hasil.skor), hasil.catatan_siswa, jawaban.versi, sekarang, t.ulang);
       }
     })();
   }
@@ -309,16 +326,16 @@ export function buatLayananAi(dep: { db: Db; jam: Jam; adapter: AdapterAi | null
   return {
     adapter,
     opsi,
-    mulai(ujianId, pengujiId, model) {
+    mulai(ujianId, pengujiId, model, ulang = false) {
       const t = jam();
       const runId = db.transaction(() => {
         const id = db
-          .prepare("INSERT INTO ai_run (ujian_id, penguji_id, model, versi_prompt, status, dibuat_at) VALUES (?, ?, ?, ?, 'berjalan', ?)")
-          .run(ujianId, pengujiId, model, VERSI_PROMPT, t).lastInsertRowid as number;
+          .prepare("INSERT INTO ai_run (ujian_id, penguji_id, model, versi_prompt, status, ulang, dibuat_at) VALUES (?, ?, ?, ?, 'berjalan', ?, ?)")
+          .run(ujianId, pengujiId, model, VERSI_PROMPT, ulang ? 1 : 0, t).lastInsertRowid as number;
         const sisip = db.prepare(
           "INSERT INTO ai_tugas (run_id, ujian_id, peserta_id, soal_id, status, diubah_at) VALUES (?, ?, ?, ?, 'menunggu', ?)",
         );
-        for (const j of jawabanBelumDinilai(db, ujianId)) sisip.run(id, ujianId, j.peserta_id, j.soal_id, t);
+        for (const j of jawabanBelumDinilai(db, ujianId, ulang)) sisip.run(id, ujianId, j.peserta_id, j.soal_id, t);
         return id;
       })();
       // Dijalankan setelah respons dikirim, supaya permintaan guru tidak menunggu panggilan AI pertama.

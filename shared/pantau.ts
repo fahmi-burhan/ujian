@@ -207,7 +207,7 @@ export const ProyektorDataSchema = z
   .object({
     judul: z.string(),
     status: z.enum(STATUS_UJIAN),
-    // Hanya saat menunggu (siswa perlu mengetiknya untuk masuk).
+    // Saat menunggu, berlangsung, dan dijeda (siswa perlu mengetiknya untuk masuk, termasuk yang terlambat).
     kode: z.string().nullable(),
     waktu: WaktuSchema.nullable(),
     hadir: z.number().int(),

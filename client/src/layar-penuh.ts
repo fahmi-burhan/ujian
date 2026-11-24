@@ -4,7 +4,11 @@
 // Memanggil: Fullscreen API & Keyboard Lock API bawaan browser.
 // Keyboard Lock (Fase 5): di Chrome/Edge, selama layar penuh yang dibuka lewat klik, tombol Esc harus DITAHAN
 // untuk keluar, sehingga Esc yang tertekan tidak sengaja tidak langsung mengeluarkan siswa dari layar penuh.
-// TIDAK TERVERIFIKASI di laptop sekolah: bila tidak didukung atau ditolak, Esc berperilaku biasa (tidak ada galat).
+// F11 juga dikunci (24 Nov, permintaan pemilik): selama kunci aktif, F11 sampai ke halaman sebagai tombol biasa,
+// sehingga halaman ujian bisa menanyakan "yakin keluar?" dulu (UjianPeserta.vue). Apakah tanpa kunci Chrome/Edge
+// tetap mengirim F11 ke halaman dan menghormati preventDefault: TIDAK TERVERIFIKASI.
+// TIDAK TERVERIFIKASI di laptop sekolah: bila tidak didukung atau ditolak, Esc/F11 berperilaku biasa (tidak ada galat),
+// dan keluar layar penuh tetap tercatat seperti sebelumnya.
 import { ref } from 'vue';
 
 export const layarPenuh = ref(typeof document !== 'undefined' && document.fullscreenElement !== null);
@@ -28,9 +32,18 @@ export async function masukLayarPenuh(): Promise<boolean> {
     return false;
   }
   try {
-    await (navigator as NavigatorKeyboard).keyboard?.lock?.(['Escape']);
+    await (navigator as NavigatorKeyboard).keyboard?.lock?.(['Escape', 'F11']);
   } catch {
     // Tidak didukung/ditolak: Esc tetap bisa keluar dari layar penuh (dan tercatat sebagai kepergian).
   }
   return true;
+}
+
+// Keluar layar penuh atas pilihan siswa sendiri (setelah konfirmasi). Tetap tercatat lewat fullscreenchange.
+export async function keluarLayarPenuh(): Promise<void> {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+  } catch {
+    // Sudah tidak layar penuh.
+  }
 }

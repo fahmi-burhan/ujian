@@ -85,23 +85,39 @@ function muatPenilaian(k: Konteks, ujianId: number): PenilaianGuru {
   };
 }
 
-// Hasil AI terbaru (berhasil atau "perlu dinilai manual") untuk setiap jawaban. Tetap tampil setelah guru mengubah
-// nilainya, supaya guru bisa membandingkan.
+// Hasil AI untuk setiap jawaban: hasil BERHASIL terbaru (sumber draf AI yang tampil, termasuk bila nilai ulang
+// sesudahnya gagal), atau "perlu dinilai manual" bila belum pernah berhasil. Tanda "berisi instruksi untuk penilai"
+// diambil dari SEMUA hasil berhasil (sama dengan aturan "Setujui semua"), jadi tidak hilang oleh penilaian ulang.
+// Tetap tampil setelah guru mengubah nilainya, supaya guru bisa membandingkan.
 function bacaSaranAi(k: Konteks, ujianId: number): SaranAi[] {
   const baris = k.db
     .prepare(
       `SELECT t.peserta_id, t.soal_id, t.status, t.hasil_json, t.galat, r.model
        FROM ai_tugas t JOIN ai_run r ON r.id = t.run_id
        WHERE t.ujian_id = ? AND t.status IN ('selesai', 'perlu_manual')
-         AND t.id = (SELECT MAX(t2.id) FROM ai_tugas t2
-                     WHERE t2.peserta_id = t.peserta_id AND t2.soal_id = t.soal_id AND t2.status IN ('selesai', 'perlu_manual'))`,
+         AND t.id = (SELECT t2.id FROM ai_tugas t2
+                     WHERE t2.peserta_id = t.peserta_id AND t2.soal_id = t.soal_id AND t2.status IN ('selesai', 'perlu_manual')
+                     ORDER BY t2.status = 'selesai' DESC, t2.id DESC LIMIT 1)`,
     )
     .all(ujianId) as { peserta_id: number; soal_id: number; status: 'selesai' | 'perlu_manual'; hasil_json: string | null; galat: string | null; model: string }[];
+  const ditandai = new Map<string, string>();
+  for (const d of k.db
+    .prepare(
+      `SELECT peserta_id, soal_id, json_extract(hasil_json, '$.indikasi_instruksi.keterangan') AS keterangan FROM ai_tugas
+       WHERE ujian_id = ? AND status = 'selesai' AND json_extract(hasil_json, '$.indikasi_instruksi.ada') = 1 ORDER BY id`,
+    )
+    .all(ujianId) as { peserta_id: number; soal_id: number; keterangan: string | null }[]) {
+    ditandai.set(`${d.peserta_id}:${d.soal_id}`, d.keterangan ?? '');
+  }
   return baris.map((b) => {
     let hasil: SaranAi['hasil'] = null;
     if (b.hasil_json !== null) {
       const p = HasilAiSchema.safeParse(JSON.parse(b.hasil_json));
       hasil = p.success ? p.data : null;
+    }
+    const tanda = ditandai.get(`${b.peserta_id}:${b.soal_id}`);
+    if (hasil && !hasil.indikasi_instruksi.ada && tanda !== undefined) {
+      hasil = { ...hasil, indikasi_instruksi: { ada: true, keterangan: `Ditandai pada penilaian AI sebelumnya: ${tanda}` } };
     }
     return { peserta_id: b.peserta_id, soal_id: b.soal_id, model: b.model, status: b.status, hasil, galat: b.galat };
   });

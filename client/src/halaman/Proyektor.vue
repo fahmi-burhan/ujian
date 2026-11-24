@@ -3,14 +3,17 @@
   Cara pakai: guru menekan "Buka layar proyektor" di dasbor → jendela baru /p?kode=XXXXXXXX, atau guru mengetik
   kode 8 karakter di PC kelas. Kode langsung dihapus dari alamat setelah ditukar menjadi sesi proyektor, sehingga
   tidak terlihat bila layar ini terproyeksi.
-  Isi mengikuti status: ruang tunggu (kode ujian besar + siapa yang sudah hadir) → berlangsung (sisa waktu, progres,
-  aktivitas di luar halaman) → selesai (rekap).
+  Isi mengikuti status: ruang tunggu (kode ujian besar + siapa yang sudah hadir) → berlangsung (sisa waktu, kode ujian
+  untuk siswa yang terlambat, progres, aktivitas di luar halaman) → selesai (rekap).
+  Selama ujian semuanya muat satu layar tanpa gulir: maks. 30 kartu per halaman, siswa yang punya catatan aktivitas di
+  atas, dan halaman berganti sendiri tiap 10 dtk bila lebih dari 30 (client/src/proyektor.ts). Aktivitas baru
+  dibunyikan bila guru menekan "Aktifkan suara" (client/src/bunyi.ts; browser mewajibkan klik dulu).
   Dipanggil oleh: client/src/router.ts. Memanggil: POST /api/proyektor/masuk, SSE /api/proyektor/stream.
   Data yang diterima sudah disaring server (docs/DESAIN.md §8.1): tanpa teks soal, isi jawaban, upaya tempel, atau
   aktivitas yang ditandai "wajar". Kata-kata netral (aturan keras #3): "keluar halaman 2× · 15 dtk", bukan vonis.
 -->
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { StatusUjian } from '../../../shared/auth.ts';
 import { PANJANG_KODE_PROYEKTOR, rapikanKode } from '../../../shared/alfabet.ts';
@@ -18,8 +21,11 @@ import { JENIS_KEPERGIAN, LABEL_EVENT, ProyektorDataSchema } from '../../../shar
 import type { ProyektorData } from '../../../shared/pantau.ts';
 import { formatSisa } from '../../../shared/time.ts';
 import { api, GalatApi, pesanGalat } from '../api.ts';
+import { aktifkanSuara, bunyikan, matikanSuara, suaraAktif } from '../bunyi.ts';
+import KodeQr from '../komponen/KodeQr.vue';
 import MerekUjian from '../komponen/MerekUjian.vue';
 import { durasiSingkat, jamWib } from '../label.ts';
+import { cekAktivitasBaru, JEDA_GANTI_HALAMAN_MS, susunHalaman } from '../proyektor.ts';
 
 const route = useRoute();
 const router = useRouter();
@@ -29,6 +35,8 @@ const galat = ref('');
 const memuat = ref(true);
 const terputus = ref(false);
 const alamatSiswa = window.location.origin;
+// QR: halaman masuk siswa dengan kode ujian sudah terisi (MasukPeserta.vue membaca ?kode=).
+const alamatQr = computed(() => (data.value?.kode ? `${alamatSiswa}/?kode=${encodeURIComponent(data.value.kode)}` : null));
 
 const LABEL_STATUS: Record<StatusUjian, string> = {
   draf: 'Belum dibuka',
@@ -55,10 +63,37 @@ const berjalan = computed(() => data.value?.status === 'berlangsung' || data.val
 const selesai = computed(() => ['selesai', 'penilaian', 'dirilis'].includes(data.value?.status ?? ''));
 const hadirNama = computed(() => (data.value?.peserta ?? []).filter((p) => p.status !== 'belum_masuk').map((p) => p.label));
 
+// ---- Halaman kartu (maks. 30 per layar) ----
+const halaman = computed(() => susunHalaman(data.value?.peserta ?? []));
+const halamanKe = ref(0);
+const kartu = computed(() => halaman.value[Math.min(halamanKe.value, halaman.value.length - 1)] ?? []);
+const gantiHalaman = setInterval(() => {
+  halamanKe.value = halaman.value.length > 1 ? (halamanKe.value + 1) % halaman.value.length : 0;
+}, JEDA_GANTI_HALAMAN_MS);
+// Siswa bertanda baru muncul di halaman pertama: langsung tampilkan halaman itu.
+const jumlahBertanda = computed(() => (data.value?.peserta ?? []).filter((p) => Object.keys(p.aktivitas).length > 0).length);
+watch(jumlahBertanda, (n, sebelum) => {
+  if (n > sebelum) halamanKe.value = 0;
+});
+
+// ---- Bunyi saat ada aktivitas baru ----
+let aktivitasTerakhir: number | null = null;
+async function alihSuara(): Promise<void> {
+  if (suaraAktif.value) matikanSuara();
+  else await aktifkanSuara();
+}
+
+// Label pendek untuk kartu yang sempit (teks tetap netral, aturan keras #3); daftar "Aktivitas terbaru" memakai label lengkap.
+const LABEL_KARTU: Record<(typeof JENIS_KEPERGIAN)[number], string> = {
+  tab_tersembunyi: 'Pindah tab',
+  fokus_hilang: 'Jendela tidak aktif',
+  keluar_layar_penuh: 'Keluar layar penuh',
+};
+
 function aktivitas(p: ProyektorData['peserta'][number]): string[] {
   return JENIS_KEPERGIAN.filter((j) => p.aktivitas[j]).map((j) => {
     const r = p.aktivitas[j] as { kali: number; total_ms: number };
-    return `${LABEL_EVENT[j]} ${r.kali}× · ${durasiSingkat(r.total_ms)}`;
+    return `${LABEL_KARTU[j]} ${r.kali}× · ${durasiSingkat(r.total_ms)}`;
   });
 }
 
@@ -82,6 +117,9 @@ function bukaAliran(): void {
       if (!hasil.success) return;
       data.value = hasil.data;
       tData.value = performance.now();
+      const cek = cekAktivitasBaru(hasil.data.terbaru, aktivitasTerakhir);
+      aktivitasTerakhir = cek.terakhir;
+      if (cek.baru && hasil.data.status === 'berlangsung') bunyikan();
       terputus.value = false;
       memuat.value = false;
     } catch {
@@ -145,77 +183,113 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearInterval(detik);
+  clearInterval(gantiHalaman);
   tutupAliran();
 });
 </script>
 
 <template>
-  <main class="min-h-screen bg-base-100 p-6 md:p-10" data-theme="light">
-    <div v-if="memuat" class="min-h-[80vh] flex items-center justify-center"><span class="loading loading-spinner loading-lg"></span></div>
+  <!-- Satu layar penuh tanpa gulir (h-dvh + overflow-hidden): proyektor tidak disentuh selama ujian. -->
+  <main class="h-dvh overflow-hidden bg-base-100 p-4 xl:p-6 flex flex-col" data-theme="light">
+    <div v-if="memuat" class="flex-1 flex items-center justify-center"><span class="loading loading-spinner loading-lg"></span></div>
 
-    <div v-else-if="data" class="flex flex-col gap-6">
-      <header class="flex flex-wrap items-center gap-4">
-        <h1 class="text-4xl md:text-5xl font-bold flex-1 min-w-0 break-words">{{ data.judul }}</h1>
+    <div v-else-if="data" class="flex-1 min-h-0 flex flex-col gap-4">
+      <header class="flex items-center gap-3 shrink-0">
+        <h1 class="text-3xl xl:text-4xl font-bold flex-1 min-w-0 truncate" :title="data.judul">{{ data.judul }}</h1>
+        <span v-if="terputus" class="badge badge-ghost"><i class="fa-solid fa-wifi" aria-hidden="true"></i>&nbsp;menyambung ulang…</span>
+        <button
+          class="btn btn-sm"
+          :class="suaraAktif ? 'btn-ghost' : 'btn-outline'"
+          type="button"
+          :aria-pressed="suaraAktif"
+          :title="suaraAktif ? 'Matikan bunyi aktivitas' : 'Bunyikan tanda saat ada aktivitas di luar halaman ujian'"
+          @click="alihSuara"
+        >
+          <i class="fa-solid" :class="suaraAktif ? 'fa-volume-high' : 'fa-volume-xmark'" aria-hidden="true"></i>
+          {{ suaraAktif ? 'Suara aktif' : 'Aktifkan suara' }}
+        </button>
         <span class="badge badge-lg text-xl p-5" :class="data.status === 'dijeda' ? 'badge-warning' : data.status === 'berlangsung' ? 'badge-success' : 'badge-neutral'">
           {{ LABEL_STATUS[data.status] }}
         </span>
-        <span v-if="terputus" class="badge badge-ghost"><i class="fa-solid fa-wifi" aria-hidden="true"></i>&nbsp;menyambung ulang…</span>
       </header>
 
       <!-- Ruang tunggu -->
-      <section v-if="data.status === 'menunggu'" class="flex flex-col items-center gap-6 text-center">
-        <p class="text-2xl md:text-3xl">Buka <span class="font-mono font-bold">{{ alamatSiswa }}</span> lalu masukkan kode:</p>
-        <p class="font-mono font-bold tracking-[0.3em] text-7xl md:text-9xl">{{ data.kode }}</p>
+      <section v-if="data.status === 'menunggu'" class="flex-1 min-h-0 overflow-hidden flex flex-col items-center justify-center gap-6 text-center">
+        <div class="flex items-center justify-center gap-10">
+          <KodeQr v-if="alamatQr" :teks="alamatQr" label="QR code halaman masuk ujian" class="size-48 xl:size-64 shrink-0 rounded-box" />
+          <div class="flex flex-col gap-3">
+            <p class="text-2xl xl:text-3xl">Pindai QR, atau buka <span class="font-mono font-bold">{{ alamatSiswa }}</span> lalu masukkan kode:</p>
+            <p class="font-mono font-bold tracking-[0.3em] text-7xl xl:text-9xl">{{ data.kode }}</p>
+          </div>
+        </div>
         <p class="text-3xl"><strong>{{ data.hadir }}</strong> dari {{ data.total }} siswa sudah masuk</p>
-        <div class="flex flex-wrap justify-center gap-2 max-w-5xl">
+        <div class="flex flex-wrap justify-center gap-2 max-w-6xl">
           <span v-for="(n, i) in hadirNama" :key="i" class="badge badge-lg badge-outline text-lg p-4">{{ n }}</span>
         </div>
       </section>
 
       <!-- Berlangsung / dijeda -->
-      <section v-else-if="berjalan" class="grid gap-6 lg:grid-cols-[1fr_22rem]">
-        <div class="flex flex-col gap-6">
-          <div class="flex flex-wrap items-center gap-8">
+      <section v-else-if="berjalan" class="flex-1 min-h-0 grid gap-4 grid-cols-[1fr_14rem] xl:grid-cols-[1fr_18rem] 2xl:grid-cols-[1fr_21rem]">
+        <div class="min-h-0 flex flex-col gap-3">
+          <div class="flex items-center gap-6 shrink-0">
             <div
-              class="font-mono font-bold tabular-nums text-7xl md:text-8xl"
+              class="font-mono font-bold tabular-nums text-6xl xl:text-7xl"
               :class="{ 'text-warning': data.status === 'dijeda', 'text-error': sisa !== null && sisa <= 5 * 60_000 && data.status === 'berlangsung' }"
               role="timer"
             >
               {{ sisa === null ? '–' : formatSisa(sisa) }}
             </div>
-            <div class="text-2xl">
+            <div class="text-xl xl:text-2xl min-w-0">
               <p><strong>{{ data.terkumpul }}</strong> dari {{ data.hadir }} sudah mengumpulkan</p>
               <p v-if="data.status === 'dijeda'" class="text-warning font-bold">Ujian dijeda pengawas</p>
             </div>
+            <div v-if="data.kode" class="ml-auto flex items-center gap-3 shrink-0">
+              <div class="text-right">
+                <p class="text-sm xl:text-base text-base-content/70">Kode ujian | {{ alamatSiswa }}</p>
+                <p class="font-mono font-bold tracking-[0.25em] text-4xl xl:text-5xl">{{ data.kode }}</p>
+              </div>
+              <KodeQr v-if="alamatQr" :teks="alamatQr" label="QR code halaman masuk ujian" class="size-20 xl:size-24 rounded" />
+            </div>
           </div>
-          <div class="grid gap-3 grid-cols-[repeat(auto-fill,minmax(14rem,1fr))]">
+
+          <!-- 30 kartu per halaman: 5×6 di layar sedang, 6×5 di layar lebar. -->
+          <div class="flex-1 min-h-0 grid gap-2 grid-cols-5 grid-rows-6 xl:grid-cols-6 xl:grid-rows-5">
             <div
-              v-for="(p, i) in data.peserta.filter((x) => x.status !== 'belum_masuk')"
-              :key="i"
-              class="card bg-base-200"
-              :class="{ 'opacity-60': p.status === 'dikumpulkan' }"
+              v-for="(p, i) in kartu"
+              :key="`${halamanKe}-${i}`"
+              class="rounded-box p-2 flex flex-col gap-1 min-h-0 overflow-hidden border-2"
+              :class="[
+                Object.keys(p.aktivitas).length > 0 ? 'border-warning bg-warning/15' : 'border-transparent bg-base-200',
+                { 'opacity-60': p.status === 'dikumpulkan' },
+              ]"
             >
-              <div class="card-body p-3 gap-1">
-                <p class="font-semibold text-lg truncate">
+              <div class="flex items-baseline gap-2 shrink-0">
+                <p class="font-semibold truncate leading-tight flex-1 min-w-0 text-[clamp(0.85rem,2.2vh,1.4rem)]" :title="p.label">
                   <i v-if="p.status === 'dikumpulkan'" class="fa-solid fa-circle-check text-success" aria-hidden="true"></i>
                   {{ p.label }}
                 </p>
-                <progress class="progress progress-primary" :value="p.terjawab" :max="Math.max(1, p.jumlah_soal)"></progress>
-                <p class="text-sm">{{ p.terjawab }}/{{ p.jumlah_soal }} soal terjawab</p>
-                <p v-for="a in aktivitas(p)" :key="a" class="text-sm text-warning-content bg-warning/30 rounded px-1">{{ a }}</p>
+                <span class="tabular-nums shrink-0 text-[clamp(0.7rem,1.7vh,1.05rem)]">{{ p.terjawab }}/{{ p.jumlah_soal }}</span>
+              </div>
+              <progress class="progress progress-primary h-1.5 shrink-0" :value="p.terjawab" :max="Math.max(1, p.jumlah_soal)"></progress>
+              <div class="flex-1 min-h-0 overflow-hidden flex flex-col gap-0.5">
+                <p v-for="a in aktivitas(p)" :key="a" class="leading-tight text-[clamp(0.7rem,1.7vh,1.05rem)]">{{ a }}</p>
               </div>
             </div>
           </div>
+          <p v-if="halaman.length > 1" class="shrink-0 text-center text-base-content/70">
+            Halaman {{ Math.min(halamanKe, halaman.length - 1) + 1 }} dari {{ halaman.length }} | berganti sendiri
+          </p>
         </div>
-        <aside class="card bg-base-200 h-fit">
-          <div class="card-body p-4 gap-2">
+
+        <aside class="card bg-base-200 min-h-0 overflow-hidden">
+          <div class="card-body p-4 gap-2 min-h-0">
             <h2 class="font-bold text-xl">Aktivitas terbaru</h2>
             <p v-if="data.terbaru.length === 0" class="text-base-content/60">Belum ada.</p>
-            <ul v-else class="flex flex-col gap-1">
-              <li v-for="(e, i) in data.terbaru" :key="i" class="text-lg">
-                <span class="font-mono text-base">{{ jamWib(e.mulai_at) }}</span>
-                {{ e.label }} · {{ LABEL_EVENT[e.jenis] }}
-                <span class="text-base-content/60">· {{ e.durasi_ms === null ? 'sedang' : durasiSingkat(e.durasi_ms) }}</span>
+            <ul v-else class="flex flex-col gap-1 overflow-hidden">
+              <li v-for="(e, i) in data.terbaru" :key="i" class="text-base xl:text-lg leading-snug">
+                <span class="font-mono text-sm xl:text-base">{{ jamWib(e.mulai_at) }}</span>
+                {{ e.label }} | {{ LABEL_EVENT[e.jenis] }}
+                <span class="text-base-content/60">| {{ e.durasi_ms === null ? 'sedang' : durasiSingkat(e.durasi_ms) }}</span>
               </li>
             </ul>
           </div>
@@ -223,18 +297,18 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- Selesai -->
-      <section v-else-if="selesai" class="flex flex-col items-center gap-4 text-center mt-16">
+      <section v-else-if="selesai" class="flex-1 flex flex-col items-center justify-center gap-4 text-center">
         <i class="fa-solid fa-flag-checkered text-7xl" aria-hidden="true"></i>
         <p class="text-5xl font-bold">Ujian selesai</p>
         <p class="text-3xl">{{ data.terkumpul }} dari {{ data.hadir }} siswa mengumpulkan jawaban. Terima kasih!</p>
       </section>
 
-      <section v-else class="flex items-center justify-center mt-16">
+      <section v-else class="flex-1 flex items-center justify-center">
         <p class="text-4xl">Ujian belum dibuka.</p>
       </section>
     </div>
 
-    <div v-else class="min-h-[80vh] flex items-center justify-center">
+    <div v-else class="flex-1 overflow-auto flex items-center justify-center">
       <form class="card bg-base-200 w-full max-w-md" @submit.prevent="tukarKode(kode)">
         <div class="card-body gap-3">
           <MerekUjian ukuran="besar" class="self-center mb-1" />

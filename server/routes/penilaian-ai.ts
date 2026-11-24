@@ -3,7 +3,7 @@
 // Memanggil: server/ai/antrean.ts, server/ai/harga.ts (lewat antrean), server/routes/milik.ts, shared/ai.ts, database.
 // Aturan:
 // - Hanya di tahap `penilaian` (mulai/hentikan); status boleh dilihat juga saat `dirilis`.
-// - Mulai ditolak bila kunci API belum diisi, run lain masih berjalan, tidak ada jawaban yang perlu dinilai, atau
+// - Mulai (opsional `ulang`: draf AI yang belum disentuh guru ikut dinilai ulang) ditolak bila kunci API belum diisi, run lain masih berjalan, tidak ada jawaban yang perlu dinilai, atau
 //   batas biaya bulan ini sudah habis. Batas biaya juga dijaga per permintaan oleh antrean.
 // - Respons tidak pernah memuat kunci API atau isi jawaban.
 import { Router } from 'express';
@@ -20,6 +20,7 @@ type BarisRun = { id: number; model: string; status: 'berjalan' | 'selesai' | 'd
 
 export function muatStatusAi(k: Konteks, ujianId: number): StatusAi {
   const target = jawabanBelumDinilai(k.db, ujianId);
+  const targetUlang = jawabanBelumDinilai(k.db, ujianId, true);
   const run = k.db
     .prepare('SELECT id, model, status, alasan_berhenti, dibuat_at, selesai_at FROM ai_run WHERE ujian_id = ? ORDER BY id DESC LIMIT 1')
     .get(ujianId) as BarisRun | undefined;
@@ -42,7 +43,9 @@ export function muatStatusAi(k: Konteks, ujianId: number): StatusAi {
     batas_usd_bulanan: usd(k.ai.opsi.batasMikroUsd),
     terpakai_usd_bulan_ini: usd(k.ai.terpakaiBulanIniMikro()),
     belum_dinilai: target.length,
+    draf_ai: targetUlang.length - target.length,
     perkiraan_usd: Object.fromEntries(MODEL_AI.map((m) => [m, usd(perkiraanMikro(m, target))])),
+    perkiraan_ulang_usd: Object.fromEntries(MODEL_AI.map((m) => [m, usd(perkiraanMikro(m, targetUlang))])),
     run: ringkasRun,
   };
 }
@@ -64,18 +67,18 @@ export function penilaianAiRouter(k: Konteks): Router {
   router.post('/ujian/:id/ai/mulai', (req, res) => {
     const { id } = validasi(ParamUjian, req.params);
     ujianMilikDiStatus(k, res, id, ['penilaian']);
-    const { model } = validasi(MulaiAiSchema, req.body);
+    const { model, ulang } = validasi(MulaiAiSchema, req.body);
     if (!k.ai.adapter) throw new GalatHttp(409, 'ai_belum_diatur');
     const berjalan = k.db.prepare("SELECT 1 FROM ai_run WHERE ujian_id = ? AND status = 'berjalan'").get(id);
     if (berjalan) throw new GalatHttp(409, 'ai_sedang_berjalan');
-    const jumlah = jawabanBelumDinilai(k.db, id).length;
+    const jumlah = jawabanBelumDinilai(k.db, id, ulang).length;
     if (jumlah === 0) throw new GalatHttp(409, 'tidak_ada_jawaban');
     if (k.ai.terpakaiBulanIniMikro() >= k.ai.opsi.batasMikroUsd) throw new GalatHttp(409, 'batas_biaya');
     const pengujiId = sesiDari(res).pengujiId;
     // Rute /api/ujian hanya bisa dicapai sesi guru (app.ts), jadi pengujiId selalu terisi di sini.
     if (pengujiId === null) throw new GalatHttp(401, 'belum_masuk');
-    const runId = k.ai.mulai(id, pengujiId, model);
-    catatAksiGuru(k, res, id, 'ai_mulai', { run_id: runId, model, jumlah });
+    const runId = k.ai.mulai(id, pengujiId, model, ulang);
+    catatAksiGuru(k, res, id, 'ai_mulai', { run_id: runId, model, jumlah, ulang });
     res.status(202);
     kirim(res, id);
   });
