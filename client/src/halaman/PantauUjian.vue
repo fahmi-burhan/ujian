@@ -525,7 +525,8 @@ async function cabutProyektor(): Promise<void> {
         <section class="card bg-base-100 shadow">
           <div class="card-body gap-2">
             <h2 class="card-title"><i class="fa-solid fa-users" aria-hidden="true"></i> Siswa</h2>
-            <div class="overflow-x-auto">
+            <!-- Digulir ke samping hanya di layar kecil (HP/tablet); di desktop kolom-kolomnya menyesuaikan lebar. -->
+            <div class="overflow-x-auto lg:overflow-x-visible">
               <table class="table table-sm">
                 <thead>
                   <tr>
@@ -561,12 +562,14 @@ async function cabutProyektor(): Promise<void> {
                       <template v-if="p.sisa_ms !== null && p.status === 'mengerjakan'">{{ formatSisa(sisaKini(p.sisa_ms) ?? 0) }}</template>
                       <span v-if="p.perpanjangan_ms > 0" class="block text-xs text-base-content/60">+{{ durasiSingkat(p.perpanjangan_ms) }}</span>
                     </td>
-                    <td>
-                      <div class="flex flex-wrap gap-1">
+                    <!-- Badge aktivitas tersusun ke bawah dan boleh terlipat, supaya kolom ini tidak memanjang ke kanan
+                         (permintaan pemilik 24 Nov: tabel tidak perlu digulir ke samping di desktop). -->
+                    <td class="min-w-40">
+                      <div class="flex flex-col items-start gap-1">
                         <span
                           v-for="a in ringkasAktivitas(p)"
                           :key="a.jenis"
-                          class="badge badge-sm badge-outline"
+                          class="badge badge-sm badge-outline h-auto py-0.5 whitespace-normal text-left leading-snug"
                           :class="{ 'badge-warning': a.jenis === 'tab_tersembunyi' || a.jenis === 'fokus_hilang' || a.jenis === 'keluar_layar_penuh' || a.jenis === 'tempel_dari_luar' }"
                         >{{ a.teks }}</span>
                       </div>
