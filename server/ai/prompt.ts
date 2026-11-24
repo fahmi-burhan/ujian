@@ -15,9 +15,13 @@ import { masalahSkor } from '../../shared/nilai.ts';
 import type { Rubrik, SoalGuru } from '../../shared/ujian.ts';
 
 // nilai-v2 (24 Nov): catatan siswa dibagi menjadi catatan umum + catatan per kriteria (permintaan pemilik).
-export const VERSI_PROMPT = 'nilai-v2';
+// nilai-v3 (24 Nov): kutipan boleh sependek satu kata bila bagian jawaban yang relevan memang sependek itu.
+export const VERSI_PROMPT = 'nilai-v3';
 export const MAKS_TOKEN_KELUAR = 4000;
 export const PANJANG_MIN_KUTIPAN = 8;
+// Kutipan yang lebih pendek dari PANJANG_MIN_KUTIPAN (mis. jawaban "a. sah" atau "c. gak") hanya sah bila minimal
+// sepanjang ini DAN berdiri sebagai kata utuh di jawaban (temuan gladi 24 Nov: 4 jawaban pendek jatuh ke "perlu manual").
+export const PANJANG_MIN_KATA = 3;
 // Sama dengan CHECK kolom penilaian.catatan (migrasi 0003) dan batas isian catatan guru (shared/nilai.ts).
 export const MAKS_CATATAN = 2000;
 
@@ -27,7 +31,7 @@ Cara menilai:
 1. Nilai jawaban HANYA berdasarkan teks soal, rubrik, jawaban acuan, dan poin wajib dari guru. Jawaban acuan adalah patokan isi, bukan satu-satunya susunan kata yang benar: jawaban yang maknanya sama tetap benar, termasuk bila memakai istilah Arab, transliterasi, atau terjemahan yang berbeda.
 2. Untuk setiap kriteria, pilih TEPAT SATU skor dari daftar level kriteria itu, yaitu level yang deskriptornya paling sesuai dengan jawaban. Bila ragu di antara dua level, pilih yang lebih rendah dan sebutkan keraguan itu di alasan.
 3. "alasan": 1–3 kalimat untuk guru: apa yang sudah ada dan apa yang kurang dibanding deskriptor level dan jawaban acuan.
-4. "kutipan": salin PERSIS 1–3 potongan (paling sedikit 8 karakter, paling panjang 200 karakter) dari jawaban siswa yang menjadi bukti skor. Salin huruf demi huruf; jangan meringkas, menerjemahkan, menambah tanda elipsis, atau memperbaiki ejaan. Bila skor lebih dari 0, wajib ada minimal satu kutipan. Bila skor 0, kutipan boleh kosong.
+4. "kutipan": salin PERSIS 1–3 potongan (paling sedikit 8 karakter, paling panjang 200 karakter) dari jawaban siswa yang menjadi bukti skor. Bila bagian jawaban yang relevan memang lebih pendek (mis. siswa hanya menulis "sah"), salin bagian itu persis apa adanya, minimal satu kata utuh. Salin huruf demi huruf; jangan meringkas, menerjemahkan, menambah tanda elipsis, atau memperbaiki ejaan. Bila skor lebih dari 0, wajib ada minimal satu kutipan. Bila skor 0, kutipan boleh kosong.
 5. Jangan menilai dari panjang jawaban, gaya bahasa, atau ejaan, kecuali rubrik memintanya.
 6. Umpan balik untuk siswa, dalam bahasa Indonesia yang santun dan menyemangati, ditujukan langsung kepada siswa ("kamu"):
    - "catatan_umum": 1–2 kalimat tentang jawaban secara keseluruhan.
@@ -158,6 +162,31 @@ export function susunCatatan(rubrik: Rubrik, umum: string, perKriteria: Record<s
   return bagian.join('\n\n');
 }
 
+// Kutipan (sudah dinormalisasi) sah bila ada di jawaban dan cukup panjang untuk menjadi bukti. Potongan 1–2 huruf
+// hampir selalu "ditemukan" di teks mana pun, jadi bukan bukti. Aturannya:
+// - minimal PANJANG_MIN_KUTIPAN karakter (atau seluruh jawaban bila jawabannya lebih pendek), ATAU
+// - minimal PANJANG_MIN_KATA karakter dan berdiri sebagai kata utuh (diapit awal/akhir teks atau bukan huruf/angka),
+//   mis. "sah" pada "a. sah", tetapi tidak "sah" di dalam "masah".
+const BUKAN_HURUF = /[^\p{L}\p{N}]/u;
+export function periksaKutipan(kutipan: string, jawaban: string): 'ok' | 'pendek' | 'tidak_ada' {
+  if (kutipan.length >= Math.min(PANJANG_MIN_KUTIPAN, jawaban.length)) return jawaban.includes(kutipan) ? 'ok' : 'tidak_ada';
+  if (kutipan.length < PANJANG_MIN_KATA) return 'pendek';
+  let dari = 0;
+  let ketemu = false;
+  for (;;) {
+    const i = jawaban.indexOf(kutipan, dari);
+    if (i === -1) break;
+    ketemu = true;
+    const sebelum = i === 0 ? '' : jawaban.charAt(i - 1);
+    const sesudah = jawaban.charAt(i + kutipan.length);
+    const awalKata = sebelum === '' || BUKAN_HURUF.test(sebelum) || BUKAN_HURUF.test(kutipan.charAt(0));
+    const akhirKata = sesudah === '' || BUKAN_HURUF.test(sesudah) || BUKAN_HURUF.test(kutipan.charAt(kutipan.length - 1));
+    if (awalKata && akhirKata) return 'ok';
+    dari = i + 1;
+  }
+  return ketemu ? 'pendek' : 'tidak_ada';
+}
+
 export type HasilPeriksa = { ok: true; hasil: HasilAi } | { ok: false; masalah: string };
 
 export function periksaKeluaran(teks: string, rubrik: Rubrik, jawaban: string): HasilPeriksa {
@@ -180,11 +209,12 @@ export function periksaKeluaran(teks: string, rubrik: Rubrik, jawaban: string): 
     if (!isi) return { ok: false, masalah: `kriteria "${k.nama}" tidak ada di keluaran AI` };
     const kutipan = isi.kutipan.map(rapikanKutipan).filter((q) => q !== '');
     for (const q of kutipan) {
-      const n = normalisasiBukti(q);
-      // Kutipan sependek 1–2 huruf hampir selalu "ditemukan" di teks mana pun, jadi bukan bukti: minimal
-      // PANJANG_MIN_KUTIPAN karakter, kecuali seluruh jawabannya memang lebih pendek.
-      if (n.length < Math.min(PANJANG_MIN_KUTIPAN, jawabanNormal.length) || !jawabanNormal.includes(n)) {
-        return { ok: false, masalah: `kutipan bukti untuk "${k.nama}" tidak ditemukan di jawaban siswa` };
+      const hasilKutipan = periksaKutipan(normalisasiBukti(q), jawabanNormal);
+      if (hasilKutipan !== 'ok') {
+        // Potongan kutipan ikut dicatat (hanya terlihat guru) supaya kegagalan mudah dilacak.
+        const potongan = q.length > 80 ? `${q.slice(0, 80)}…` : q;
+        const sebab = hasilKutipan === 'pendek' ? 'terlalu pendek untuk menjadi bukti' : 'tidak ditemukan di jawaban siswa';
+        return { ok: false, masalah: `kutipan bukti untuk "${k.nama}" ${sebab}: "${potongan}"` };
       }
     }
     if (isi.skor > 0 && kutipan.length === 0) {

@@ -12,7 +12,7 @@ import type { StatusAi } from '../shared/ai.ts';
 import { NilaiPesertaSchema, PenilaianGuruSchema } from '../shared/nilai.ts';
 import type { AdapterAi, JawabanAi, PermintaanAi } from '../server/ai/adapter.ts';
 import { GalatAi } from '../server/ai/adapter.ts';
-import { bungkusJawaban, netralkanJawaban, normalisasiBukti, periksaKeluaran, susunCatatan } from '../server/ai/prompt.ts';
+import { bungkusJawaban, netralkanJawaban, normalisasiBukti, periksaKeluaran, periksaKutipan, susunCatatan } from '../server/ai/prompt.ts';
 import { isiDataAwal, mulaiAplikasiUji, PASSWORD_GURU, T0 } from './bantuan.ts';
 import type { AplikasiUji, Klien } from './bantuan.ts';
 
@@ -530,6 +530,31 @@ describe('validasi keluaran AI (aturan keras #7)', () => {
       JAWABAN_BUDI,
     );
     assert.deepEqual(lewat, { ok: false, masalah: 'catatan untuk siswa terlalu panjang' });
+  });
+
+  test('kutipan sependek satu kata sah bila berdiri sebagai kata utuh (temuan gladi: jawaban "a. sah")', () => {
+    const jawaban = normalisasiBukti('a. sah\nb. Yang menanggung adalah yang menyewakan\nc. gak');
+    assert.equal(periksaKutipan('sah', jawaban), 'ok');
+    assert.equal(periksaKutipan('a. sah', jawaban), 'ok');
+    assert.equal(periksaKutipan('gak', jawaban), 'ok');
+    assert.equal(periksaKutipan('ang', jawaban), 'pendek', 'potongan di tengah kata bukan bukti');
+    assert.equal(periksaKutipan('ya', jawaban), 'pendek');
+    assert.equal(periksaKutipan('batal', jawaban), 'tidak_ada');
+    assert.equal(periksaKutipan('masah', normalisasiBukti('jual beli masah')), 'ok');
+    assert.equal(periksaKutipan('sah', normalisasiBukti('jual beli masah')), 'pendek');
+    const r2 = { kriteria: RUBRIK_1.kriteria, poin_wajib: [] };
+    const ok = periksaKeluaran(
+      JSON.stringify({ kriteria: { k1: { alasan: 'a', kutipan: ['sah'], skor: 5 }, k2: { alasan: 'b', kutipan: [], skor: 0 } }, catatan_umum: '', indikasi_instruksi: { ada: false, keterangan: '' } }),
+      r2,
+      'a. sah\nb. Yang menanggung adalah yang menyewakan',
+    );
+    assert.equal(ok.ok, true);
+    const gagal = periksaKeluaran(
+      JSON.stringify({ kriteria: { k1: { alasan: 'a', kutipan: ['tidak pernah ditulis siswa'], skor: 5 }, k2: { alasan: 'b', kutipan: [], skor: 0 } }, catatan_umum: '', indikasi_instruksi: { ada: false, keterangan: '' } }),
+      r2,
+      'a. sah',
+    );
+    assert.deepEqual(gagal, { ok: false, masalah: 'kutipan bukti untuk "Kelengkapan" tidak ditemukan di jawaban siswa: "tidak pernah ditulis siswa"' });
   });
 
   test('kutipan terlalu pendek bukan bukti (kecuali jawabannya sendiri pendek)', () => {
